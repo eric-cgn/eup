@@ -1,0 +1,45 @@
+# Every push to dev: the host tests and a build, published as the "dev" pre-release on
+# GitHub. Each build replaces the last one. Its files are named for the version in
+# core/version.h, "-dev-", and the commit, such as EUP-1.0-dev-46a0304.image, and the Mac
+# programs show the same version.
+name: Dev build
+
+on:
+  push:
+    branches: [dev]
+
+# Only the newest build matters
+concurrency:
+  group: dev
+  cancel-in-progress: true
+
+jobs:
+  dev:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Version
+        run: |
+          v=$(sed -n 's/^#define EUP_VERSION "\(.*\)"/\1/p' core/version.h)-dev-$(git rev-parse --short=7 HEAD)
+          sed -i -e "s/^#define EUP_VERSION \".*\"/#define EUP_VERSION \"$v\"/" \
+                 -e 's/^#define EUP_VERS_STAGE release/#define EUP_VERS_STAGE development/' core/version.h
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: Installer Shell and EUP (Retro68)
+        run: ./build-mac.sh
+      - name: Own the build output
+        run: sudo chown -R "$(id -u):$(id -g)" build prebuilt   # the build's container runs as root
+      - name: Test
+        run: make test
+      - name: Release files
+        run: RELEASE_ANY_TREE=1 ./release.sh   # the version is stamped and prebuilt/ rebuilt
+      - name: Own the release files
+        run: sudo chown -R "$(id -u):$(id -g)" build dist
+      - name: Pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev --cleanup-tag --yes || true
+          gh release create dev dist/* --prerelease --target "$GITHUB_SHA" --title "EUP $VERSION" \
+            --notes "A build of the dev branch, not a release. It is replaced by every change to dev."

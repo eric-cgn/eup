@@ -1,0 +1,55 @@
+# Every pull request: the host tests on Linux and macOS, and on Linux the Mac programs built
+# with Retro68 and the release files made from them, kept as an artifact. A pull request into
+# main fails unless it comes from dev: features go into dev, and main only takes dev, as a
+# release.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  branch:
+    name: Into main only from dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Into main only from dev
+        if: github.base_ref == 'main' && github.head_ref != 'dev'
+        run: |
+          echo "::error::Pull requests into main come from dev. Point this one at dev instead."
+          exit 1
+
+  host:
+    name: Host tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Build and test eup
+        run: make test
+
+  mac:
+    name: Mac programs and release files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Installer Shell and EUP (Retro68)
+        run: ./build-mac.sh
+      - name: Own the build output
+        run: sudo chown -R "$(id -u):$(id -g)" build prebuilt   # the build's container runs as root
+      - name: Test, with the programs just built
+        run: make test
+      - name: Release files
+        run: RELEASE_ANY_TREE=1 ./release.sh   # prebuilt/ was rebuilt: new dates in the MacBinary headers
+      - name: Own the release files
+        run: sudo chown -R "$(id -u):$(id -g)" build dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: eup
+          path: dist/
