@@ -1,0 +1,60 @@
+# Every push to main: if core/version.h names a version with no release yet, build EUP, tag
+# the commit vX.Y, and make a GitHub release with the Mac disk, EUP and the Installer Shell
+# alone (.bin and .hqx, for builds that fetch the shell), and the source for the eup command.
+# Its notes are the version's section of CHANGES.md. A push that keeps the version does
+# nothing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# One at a time, so two quick landings can't both release the same version
+concurrency: release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - id: version
+        name: A new version?
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(sed -n 's/^#define EUP_VERSION "\(.*\)"/\1/p' core/version.h)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "EUP $v is already released"
+            echo "new=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=yes" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release notes
+        if: steps.version.outputs.new == 'yes'
+        run: |
+          awk -v v="$VERSION" '/^## /{p = ($2 == v); next} p' CHANGES.md > notes.txt
+          grep -q . notes.txt || { echo "::error::CHANGES.md has no section for $VERSION"; exit 1; }
+      - name: Installer Shell and EUP (Retro68)
+        if: steps.version.outputs.new == 'yes'
+        run: ./build-mac.sh
+      - name: Own the build output
+        if: steps.version.outputs.new == 'yes'
+        run: sudo chown -R "$(id -u):$(id -g)" build prebuilt   # the build's container runs as root
+      - name: Test
+        if: steps.version.outputs.new == 'yes'
+        run: make test
+      - name: Release files
+        if: steps.version.outputs.new == 'yes'
+        run: RELEASE_ANY_TREE=1 ./release.sh   # prebuilt/ was rebuilt: new dates in the MacBinary headers
+      - name: Own the release files
+        if: steps.version.outputs.new == 'yes'
+        run: sudo chown -R "$(id -u):$(id -g)" build dist
+      - name: Release
+        if: steps.version.outputs.new == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "EUP $VERSION" --notes-file notes.txt
