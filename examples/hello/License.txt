@@ -1,0 +1,5 @@
+Hello License
+
+Hello is an example. You may copy it, change it, and give it away.
+
+It comes with no warranty of any kind.

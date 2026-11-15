@@ -1,0 +1,5 @@
+Hello Read Me
+
+This file was put here by Hello's installer, an example made with EUP.
+
+The Samples folder holds three short texts.

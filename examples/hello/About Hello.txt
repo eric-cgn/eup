@@ -1,0 +1,5 @@
+Hello is an example of an installer made with EUP.
+
+It puts a Read Me and a folder of samples on your disk. Nothing else is changed.
+
+Hello needs any Mac and System 6.0 or later.

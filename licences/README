@@ -1,0 +1,15 @@
+Third-party notices
+
+EUP is MIT (../LICENSE). The two Mac programs, the installer program (which every
+installer made with EUP is a copy of) and EUP, the packager application, also contain
+code from these projects; their notices go with them:
+
+  newlib.txt                 newlib, the C library (BSD-style notices)
+  multiversal.txt            Multiversal Interfaces (MIT)
+  retro68-gcc-runtime.txt    Retro68's runtime and GCC's libgcc (GPL v3 or later
+                             with the GCC Runtime Library Exception)
+  inflate.txt                Mill's gzip decoder, in the installer program (MIT)
+
+Nothing under the GPL alone, or the LGPL, is in either program. The command-line
+packager, eup, is EUP's own code and the C library of the system it's built on.
+On the release disk, these notices are the "Licenses" file.

@@ -1,0 +1,96 @@
+EUP 1.0
+
+EUP makes installers. You write a text file that names your files and says where they go; EUP makes an installer from it. Every installer made with EUP looks and works the same way: install types in a pop-up menu, a list for Custom Install, the disk space needed, Install Location with Choose..., and a progress window with Cancel. An installer can also show a screen about your software and a license to agree to.
+
+On this disk
+
+EUP: the packager.
+Installer Shell: the installer that EUP copies. Keep it in the same folder as EUP.
+Example: an INI file and the files it installs.
+Licenses: the terms of the code in EUP and in the installers it makes.
+
+Making an installer
+
+1. Make a folder. Put your INI file in it, and everything the installer is to install.
+2. Open EUP, and open the INI file. EUP checks it and the files it names, and lists any problems by line.
+3. Save the installer. EUP compresses your files into it.
+
+Try it with the Example folder first.
+
+The INI file
+
+An INI file is a text file in sections. Each section starts with its name in brackets; under it, each line is a key, an equals sign, and a value. A line that starts with a semicolon is a comment.
+
+[installer]
+product = Hello
+version = 1.0
+description_screen = About Hello
+license_screen = License
+
+[type easy]
+label = Easy Install
+description = Hello and its samples.
+
+[type custom]
+label = Custom Install
+custom = yes
+
+[component hello]
+label = Hello
+source = Hello
+flags = bundle
+types = easy, custom
+
+[component samples]
+label = Samples
+source = Samples
+destination = %chosen%:Samples
+types = easy, custom
+
+Paths are written with colons, from the INI file's folder: Files:Samples. In destination, %chosen% is the folder the user picks; everything is installed inside it. A folder is installed with everything in it.
+
+[installer]
+product: the software's name. Needed.
+version: its version, such as 1.0 or 2.0.1.
+title: the window's title. Normally "Install" with the product and version.
+file: the installer's name. Normally the title.
+folder: the name of the folder offered for the install. Normally the product.
+get_info: the version line in Get Info.
+creator, icon: the installer's own creator and a file with its icon (ICN# 128).
+description_screen, license_screen: text files shown before the install. The license has Agree and Disagree.
+
+[type ID]: an install type, in the pop-up menu.
+label: its name. Needed.
+description, or description_file: what's shown in the box.
+custom = yes: the box is a list to pick from.
+remove_old = no: old names (see [upgrade]) are left alone.
+
+[group ID]: a heading in the list.
+label: the heading. Needed.
+selectable = yes: the heading has a checkbox for its whole group.
+
+[component ID]: a file or folder to install.
+label, source, types: its name, the file or folder, and the types that install it. Needed.
+destination: where it goes. Normally %chosen%.
+group, description, checked: its group, its line in the list, and whether it's checked at first.
+as: its name when installed.
+type, creator, flags: the file's type and creator, and Finder flags (bundle, invisible, or a number).
+text = yes: plain files are text.
+compress = no: stored as is.
+
+[upgrade]
+detect: a file that marks an earlier install; the installer installs into its folder.
+remove: an old name to remove. One to a line, as many as needed.
+keep: a file not to replace if it's there.
+
+[layout]
+window: the installed folder's window: left, top, width, height.
+place: an icon's place in it: Hello: 18, 9
+
+Each line of a text file is a line on the screen: write a paragraph as one line, and leave a blank line between paragraphs. Texts are up to 32,000 characters.
+
+Requirements
+
+EUP and the installers it makes need a Mac Plus or later and System 6 or later. EUP needs 512K of memory.
+
+EUP 1.0. © 2026 OneInAMillion Software. Freeware.
