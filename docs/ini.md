@@ -52,6 +52,12 @@ label = Easy Install
   hello.ini:33: text: yes or no
   ```
 
+  **Warnings** are reported the same way, but don't stop the packager:
+
+  ```
+  hello.ini:42: Warning: "Settings" is removed and kept: it's kept
+  ```
+
 ## Paths and names
 
 Paths are written the Mac way, on every system:
@@ -64,8 +70,8 @@ Paths are written the Mac way, on every system:
 - **Installed paths** (`destination`, `remove`, `keep`) are inside the folder the user picks,
   `%chosen%`. Write `%chosen%:Mill Plug-Ins`, `:Mill Plug-Ins`, or (one name) `Mill Plug-Ins`. A
   path that starts with a name and has a colon after it, like `Macintosh HD:System Folder`, names
-  a disk, and isn't allowed in EUP 1.0; nor are `%system_folder%` and the other substitutions of
-  later versions.
+  a disk, and isn't allowed; nor are `%system_folder%` and the other substitutions of later
+  versions.
 - **`%%`** is a `%` in a name: `50%% off`. A `%` on its own is an error.
 - **A name** is 1 to 31 characters, without control characters, and doesn't start with a period
   (the Mac keeps those for drivers). Names are compared as the Mac compares them, without regard
@@ -98,6 +104,7 @@ the Finder doesn't show (invisible, such as a folder's custom icon file) are lef
 |---|---|---|
 | `product` | The software's name, as in "Mill is installed." and "Install Mill in:". Up to 63 characters. **Needed.** | |
 | `version` | Its version: `1.0`, `2.0.1`, or with a stage, `1.1d1`, `1.1a2`, `1.1b3`. Goes in the window's title and Get Info's version. | none |
+| `version_string` | The version as shown, if it isn't just the number: `2.0.1-dev-46a0304`. Any text, up to 31 characters. Goes in the title and Get Info in place of `version`, which is still needed, for the number the 'vers' resource holds. | `version` |
 | `title` | The installer's window title. Up to 63 characters. | `Install PRODUCT VERSION` |
 | `file` | The installer's name on the Mac. A name (31 characters at most). | the title |
 | `output` | The base name of `eup`'s output files, `OUTPUT.bin` and `OUTPUT.hqx`. | the file name with spaces as `-` |
@@ -138,7 +145,8 @@ Groups make headings in a custom type's list. A component joins one with `group 
 | `selectable` | `yes`: the heading has a checkbox for the whole group: checked (an X) when all its components are, a dash when some are, empty when none are. Clicking it checks them all, or, if all were checked, unchecks them all. | `no` |
 
 A group's components must be written together (in a custom type's list, one group's components
-can't be split by another's). Components without a group have no heading.
+can't be split by another's). Components without a group have no heading. When any group in the
+list has `selectable = yes`, the whole list shifts right 16 pixels, so every row lines up.
 
 ## [component ID]
 
@@ -167,8 +175,27 @@ can't be installed in the same place.
 | Key | Value |
 |---|---|
 | `detect` | A file name that marks an earlier install. When the user chooses a folder that holds a file of this name, the installer installs into that folder as it is, instead of making a new folder in it. |
+| `require` | The name of software that must be installed first: `require = Mill`. Up to 63 characters. Needs `detect`: the installer looks for an earlier install as `detect` finds one, in the install folder (from Install Location's default, or Choose…), and if there's none, refuses to install and says "Install Mill first, then open this installer again." Nothing is written. For an add-on that goes into another product's folder. |
 | `remove` | An installed path to remove before installing: a name from an earlier version. A folder is removed only if it's empty. Repeated, one to a line. Not done by a type with `remove_old = no`. |
-| `keep` | An installed path not to replace: if the file is there, the installer leaves it and skips the one it carries (a settings file, say). Repeated. A path can't be both removed and kept. |
+| `keep` | An installed path not to replace: if the file is there, the installer leaves it and skips the one it carries (a settings file, say). Repeated. |
+
+`remove` never touches what `keep` names, nor anything in a kept folder; the packagers warn of an
+INI that names one in both.
+
+An add-on that installs into Mill's folder, and only there:
+
+```ini
+[installer]
+product = Millennium Pack
+folder = Mill               ; Install Location starts on the Mill folder at the top of the startup disk
+
+[upgrade]
+detect = Mill               ; the folder that holds a file named Mill is an install of Mill
+require = Mill              ; and there must be one: "Install Mill first, then open this installer again."
+```
+
+`detect` names the file, `require` the software, as the message shows it; here they're the same.
+A `require` without `detect` is an error.
 
 ## [layout]
 
@@ -187,13 +214,18 @@ places Mill at `18, 9` and its folders a row down at `108, 79` and `198, 79`.
 1. If the INI names them, the description screen, then the license screen.
 2. The install window: the type pop-up, the box (the type's description, or a custom type's
    list), the disk space available and needed, and **Install Location**, which names the folder and
-   disk. **Choose…** picks another place (and recognizes an earlier install by `detect`).
-   **Install** is dim if nothing is picked or there isn't room.
-3. Installing, in a small window: "Removing old files" if there are any, then "Installing LABEL"
+   disk. **Choose…** picks another place. It recognizes an earlier install by `detect`: Save
+   with the install folder's name, or with that folder open, and the installer installs into it.
+   **Install** is dim if nothing is picked or there isn't room. With `require`, Install looks for
+   an earlier install first, and without one says so and goes back to the choices.
+3. Installing, in a small window. First, if a file it would replace or remove is open (an
+   application that's running, say), it stops before it writes anything and names the file and
+   the application to quit. Then "Removing old files" if there are any, then "Installing LABEL"
    for each component, and a bar that moves with the bytes unpacked. **Cancel** (or Escape, or
    Command-period) stops at once. Each file is written under a temporary name and given its name
    only when it's whole, so a Cancel, a full disk, or an error leaves no partial file and keeps the
-   file it would have replaced.
+   file it would have replaced. A file that can't be replaced is put back as it was, and the
+   installer says which.
 4. The end, in the same small window: "PRODUCT is installed." with **Quit**, or the error with
    **OK**, back to the choices. After a Cancel, the choices say "Installation canceled."
 

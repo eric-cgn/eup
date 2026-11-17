@@ -361,7 +361,8 @@ static pascal Boolean prob_filter(DialogPtr d, EventRecord *e, short *item)
     return false;
 }
 
-static void show_problems(const EupConfig *c, ConstStr255Param ini_name)
+/* The errors (or the warnings), one to a line, in a window titled with the INI's name, until OK */
+static void show_problems(const EupError *list, int n, Boolean more, ConstStr255Param ini_name)
 {
     DialogPtr d;
     short type, item, i, lines;
@@ -382,17 +383,17 @@ static void show_problems(const EupConfig *c, ConstStr255Param ini_name)
     prob_line = (*prob_te)->lineHeight;
     prob_view.bottom = prob_view.top + (prob_view.bottom - prob_view.top) / prob_line * prob_line;
     (*prob_te)->viewRect = prob_view;
-    for (i = 0; i < c->nerrors; i++) {
-        cstr(text, c->errors[i].text);
+    for (i = 0; i < n; i++) {
+        cstr(text, list[i].text);
         if (text[0] && text[1] >= 'a' && text[1] <= 'z') text[1] -= 32;      /* a sentence on the Mac */
-        if (c->errors[i].line) {
-            NumToString(c->errors[i].line, num);
+        if (list[i].line) {
+            NumToString(list[i].line, num);
             fmt(s, STR_LINE, num, text);
         } else pcopy(s, text);
         if (i) TEInsert("\r", 1, prob_te);
         TEInsert((Ptr)s + 1, s[0], prob_te);
     }
-    if (c->more_errors) {
+    if (more) {
         GetIndString(s, 128, STR_MORE);
         TEInsert("\r", 1, prob_te);
         TEInsert((Ptr)s + 1, s[0], prob_te);
@@ -471,7 +472,7 @@ static void package(void)
     close_ref(ini_ref);
     SetCursor(*GetCursor(watchCursor));
     if (eup_parse(&cfg, text, len) < 0) { free(text); alert_str(ALRT_STOP, STR_NO_MEMORY); return; }
-    if (cfg.nerrors) { show_problems(&cfg, in_reply.fName); eup_free(&cfg); free(text); return; }
+    if (cfg.nerrors) { show_problems(cfg.errors, cfg.nerrors, cfg.more_errors, in_reply.fName); eup_free(&cfg); free(text); return; }
     if (open_shell(&shell_len) != noErr) { eup_free(&cfg); free(text); alert_str(ALRT_STOP, STR_SHELL_MISSING); return; }
     memset(&fs, 0, sizeof fs);
     fs.stat = m_stat;
@@ -493,11 +494,12 @@ static void package(void)
     pin.progress = progress;
     if (eup_pack_check(&pin, &pack)) {
         close_ref(shell_ref);
-        show_problems(&cfg, in_reply.fName);
+        show_problems(cfg.errors, cfg.nerrors, cfg.more_errors, in_reply.fName);
         eup_free(&cfg);
         free(text);
         return;
     }
+    if (cfg.nwarnings) show_problems(cfg.warnings, cfg.nwarnings, false, in_reply.fName);
     /* where it goes */
     InitCursor();
     GetIndString(s, 128, STR_SAVE_AS);

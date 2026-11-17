@@ -90,6 +90,14 @@ static void err(EupConfig *c, int line, const char *fmt, const char *a, const ch
     c->nerrors++;
 }
 
+static void warn(EupConfig *c, int line, const char *fmt, const char *a, const char *b)
+{
+    if (c->nwarnings == EUP_MAX_WARNINGS) return;
+    c->warnings[c->nwarnings].line = line;
+    eup_fmt(c->warnings[c->nwarnings].text, fmt, a, b);
+    c->nwarnings++;
+}
+
 static void why_err(EupConfig *c, int line, const char *key, const char *why)
 {
     err(c, line, "%s: %s", key, why);
@@ -242,12 +250,12 @@ enum { SEC_NONE, SEC_INSTALLER, SEC_TYPE, SEC_COMPONENT, SEC_UPGRADE, SEC_LAYOUT
 
 static const char *const KEYS[][14] = {
     { 0 },
-    { "product", "version", "title", "file", "output", "folder", "get_info", "creator", "icon", "description_screen",
+    { "product", "version", "version_string", "title", "file", "output", "folder", "get_info", "creator", "icon", "description_screen",
       "license_screen", 0 },
     { "label", "description", "description_file", "custom", "remove_old", 0 },
     { "label", "group", "description", "source", "destination", "types", "checked", "type", "creator", "flags", "as",
       "text", "compress", 0 },
-    { "remove", "keep", "detect", 0 },
+    { "remove", "keep", "detect", "require", 0 },
     { "window", "place", 0 },
     { "label", "selectable", 0 }
 };
@@ -262,7 +270,7 @@ static int repeats(int sec, const char *key)
 typedef struct {
     int sec, line;
     unsigned long seen;             /* the keys given in this section */
-    int seen_installer, seen_upgrade, seen_layout, installer_line;
+    int seen_installer, seen_upgrade, seen_layout, installer_line, require_line;
     /* a component's types, read when every type is known */
     char **types_text;
     int *types_line, *checked_given, cap;
@@ -291,7 +299,7 @@ static void section(EupConfig *c, Parse *ps, char *s, int line)
     if (!strcmp(s, "installer") || !strcmp(s, "upgrade") || !strcmp(s, "layout")) {
         int *seen = s[0] == 'i' ? &ps->seen_installer : s[0] == 'u' ? &ps->seen_upgrade : &ps->seen_layout;
         if (*id) { err(c, line, "[%s] has no name after it", s, NULL); return; }
-        if (*seen) { err(c, line, "a second [%s] section", s, NULL); return; }
+        if (*seen) { err(c, line, "A second [%s] section", s, NULL); return; }
         *seen = 1;
         if (s[0] == 'i') ps->installer_line = line;
         ps->sec = s[0] == 'i' ? SEC_INSTALLER : s[0] == 'u' ? SEC_UPGRADE : SEC_LAYOUT;
@@ -308,7 +316,7 @@ static void section(EupConfig *c, Parse *ps, char *s, int line)
     if (s[0] == 'g') {
         EupGroup *g;
         for (i = 0; i < c->ngroups; i++)
-            if (!strcmp(EUP_C(c->groups[i].id), id)) { err(c, line, "a second [group %s]", id, NULL); return; }
+            if (!strcmp(EUP_C(c->groups[i].id), id)) { err(c, line, "A second [group %s]", id, NULL); return; }
         if (!(g = (EupGroup *)grow(c->groups, c->ngroups, &c->cap_groups, sizeof *g))) return;
         c->groups = g;
         g = &c->groups[c->ngroups++];
@@ -319,7 +327,7 @@ static void section(EupConfig *c, Parse *ps, char *s, int line)
     } else if (s[0] == 't') {
         EupType *t;
         for (i = 0; i < c->ntypes; i++)
-            if (!strcmp(EUP_C(c->types[i].id), id)) { err(c, line, "a second [type %s]", id, NULL); return; }
+            if (!strcmp(EUP_C(c->types[i].id), id)) { err(c, line, "A second [type %s]", id, NULL); return; }
         if (!(t = (EupType *)grow(c->types, c->ntypes, &c->cap_types, sizeof *t))) return;
         c->types = t;
         t = &c->types[c->ntypes++];
@@ -331,7 +339,7 @@ static void section(EupConfig *c, Parse *ps, char *s, int line)
     } else {
         EupComp *k;
         for (i = 0; i < c->ncomps; i++)
-            if (!strcmp(EUP_C(c->comps[i].id), id)) { err(c, line, "a second [component %s]", id, NULL); return; }
+            if (!strcmp(EUP_C(c->comps[i].id), id)) { err(c, line, "A second [component %s]", id, NULL); return; }
         if (!(k = (EupComp *)grow(c->comps, c->ncomps, &c->cap_comps, sizeof *k))) return;
         c->comps = k;
         if (c->ncomps >= ps->cap) {
@@ -399,7 +407,8 @@ static void key_installer(EupConfig *c, int line, const char *k, char *v)
     else if (!strcmp(k, "version")) {
         if (!version(v, c->vers)) err(c, line, "version: a number like 1.0, 2.0.1, or 1.1b2", NULL, NULL);
         else c->version = text(c, line, k, v, 15);
-    } else if (!strcmp(k, "title")) c->title = text(c, line, k, v, 63);
+    } else if (!strcmp(k, "version_string")) c->version_string = text(c, line, k, v, 31);
+    else if (!strcmp(k, "title")) c->title = text(c, line, k, v, 63);
     else if (!strcmp(k, "file")) { if (!(c->file = eup_name(c, v, why))) why_err(c, line, k, why); }
     else if (!strcmp(k, "output")) {
         if (strchr(v, '/') || strchr(v, ':') || strchr(v, '\\')) err(c, line, "output: a file name, without a folder", NULL, NULL);
@@ -469,11 +478,30 @@ static void key_upgrade(EupConfig *c, int line, const char *k, char *v)
 {
     char why[200];
     if (!strcmp(k, "detect")) { if (!(c->detect = eup_name(c, v, why))) why_err(c, line, k, why); }
+    else if (!strcmp(k, "require")) c->require = text(c, line, k, v, 63);
     else {
-        int remove = !strcmp(k, "remove");
+        int remove = !strcmp(k, "remove"), i;
         EupPath p, *a;
         if (!eup_split_path(c, v, EUP_INSTALLED, &p, why)) { why_err(c, line, k, why); return; }
         if (!p.n) { err(c, line, "%s: a name inside %%chosen%%, not %%chosen%% itself", k, NULL); return; }
+        /* an installer never removes what it keeps */
+        for (i = 0; i < (remove ? c->nkeep : c->nremove); i++) {
+            const EupPath *r = remove ? &p : &c->remove[i], *kp = remove ? &c->keep[i] : &p;
+            if (eup_path_in(r, kp)) {
+                char t[200];
+                int j, n = 0;
+                for (j = 0; j < r->n; j++) {        /* the removed path, as names */
+                    int k = r->names[j][0];
+                    if (n + k + 2 > (int)sizeof t) break;
+                    if (j) t[n++] = ':';
+                    memcpy(t + n, r->names[j] + 1, k);
+                    n += k;
+                }
+                t[n] = 0;
+                warn(c, line, "\"%s\" is removed and kept: it's kept", t, NULL);
+                break;
+            }
+        }
         if (remove) {
             if (!(a = (EupPath *)grow(c->remove, c->nremove, &c->cap_remove, sizeof *a))) return;
             c->remove = a;
@@ -544,7 +572,10 @@ static void key(EupConfig *c, Parse *ps, char *k, char *v, int line)
     case SEC_INSTALLER: key_installer(c, line, k, v); break;
     case SEC_TYPE: key_type(c, line, k, v); break;
     case SEC_COMPONENT: key_component(c, ps, line, k, v); break;
-    case SEC_UPGRADE: key_upgrade(c, line, k, v); break;
+    case SEC_UPGRADE:
+        if (!strcmp(k, "require")) ps->require_line = line;
+        key_upgrade(c, line, k, v);
+        break;
     case SEC_LAYOUT: key_layout(c, line, k, v); break;
     case SEC_GROUP: key_group(c, line, k, v); break;
     }
@@ -609,10 +640,14 @@ static void finish(EupConfig *c, Parse *ps)
 {
     char why[200];
     int i, j, t;
-    if (!ps->seen_installer) err(c, 0, "no [installer] section", NULL, NULL);
+    if (!ps->seen_installer) err(c, 0, "No [installer] section", NULL, NULL);
     else if (!c->product) err(c, ps->installer_line, "[installer]: product is needed (the software's name)", NULL, NULL);
+    if (c->version_string && !c->version)
+        err(c, ps->installer_line, "[installer]: version_string needs version, a number like 1.0", NULL, NULL);
+    if (!c->version_string) c->version_string = c->version;
     if (c->product && !c->title)            /* "Install Mill 2.0.1" */
-        c->title = joined(c, "Install ", EUP_C(c->product), c->version ? " " : NULL, c->version ? EUP_C(c->version) : NULL);
+        c->title = joined(c, "Install ", EUP_C(c->product), c->version_string ? " " : NULL,
+                          c->version_string ? EUP_C(c->version_string) : NULL);
     if (c->title && !c->file) {
         if (!(c->file = eup_name(c, EUP_C(c->title), why)))
             err(c, ps->installer_line, "[installer]: the title can't be the installer's file name (%s); give file", why, NULL);
@@ -629,6 +664,8 @@ static void finish(EupConfig *c, Parse *ps)
     if (c->product && !c->folder && !(c->folder = eup_name(c, EUP_C(c->product), why)))
         err(c, ps->installer_line, "[installer]: the product's name can't be a folder name (%s); give folder", why, NULL);
     if (c->title && !c->get_info) c->get_info = c->title;
+    if (c->require && !c->detect)
+        err(c, ps->require_line, "[upgrade]: require needs detect, the file that marks an install of %s", EUP_C(c->require), NULL);
     if (c->icon.n && !c->has_creator) err(c, ps->installer_line, "[installer]: an icon needs a creator of its own", NULL, NULL);
     for (t = 0; t < c->ntypes; t++) {
         EupType *ty = &c->types[t];
@@ -636,8 +673,8 @@ static void finish(EupConfig *c, Parse *ps)
         if (ty->description && ty->description_file.n)
             err(c, ty->line, "[type %s]: description or description_file, not both", EUP_C(ty->id), NULL);
     }
-    if (!c->ntypes) err(c, 0, "no [type] sections: at least one install type is needed", NULL, NULL);
-    if (!c->ncomps) err(c, 0, "no [component] sections: at least one is needed", NULL, NULL);
+    if (!c->ntypes) err(c, 0, "No [type] sections: at least one install type is needed", NULL, NULL);
+    if (!c->ncomps) err(c, 0, "No [component] sections: at least one is needed", NULL, NULL);
     resolve_types(c, ps);
     for (i = 0; i < c->ngroups; i++)
         if (!c->groups[i].label) err(c, c->groups[i].line, "[group %s]: label is needed", EUP_C(c->groups[i].id), NULL);
@@ -674,10 +711,6 @@ static void finish(EupConfig *c, Parse *ps)
         }
         if (!n && c->ncomps) err(c, ty->line, "[type %s]: no component is in it", EUP_C(ty->id), NULL);
     }
-    for (i = 0; i < c->nremove; i++)
-        for (j = 0; j < c->nkeep; j++)
-            if (eup_same_path(&c->remove[i], &c->keep[j]))
-                err(c, 0, "[upgrade]: \"%s\" is both removed and kept", EUP_C(c->keep[j].names[c->keep[j].n - 1]), NULL);
 }
 
 /* ---- reading ---- */
@@ -703,13 +736,13 @@ int eup_parse(EupConfig *c, const char *in, long len)
         if (e + 1 < end && e[0] == 0 && in[e - buf] == '\r' && e[1] == '\n') p++;
         while (*s == ' ' || *s == '\t') s++;
         if (!*s || *s == ';' || *s == '#') continue;
-        if (memchr(s, 0, e - s)) { err(c, line, "a NUL character", NULL, NULL); continue; }
+        if (memchr(s, 0, e - s)) { err(c, line, "A NUL character", NULL, NULL); continue; }
         /* a comment after a value: a ; after a space or tab */
         for (k = s + 1; *k; k++) if (*k == ';' && (k[-1] == ' ' || k[-1] == '\t')) { *k = 0; break; }
         n = (int)strlen(s);
         while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
         if (*s == '[') {
-            if (s[n - 1] != ']') { err(c, line, "a section's name ends with ]", NULL, NULL); ps.sec = SEC_NONE; ps.line = line; continue; }
+            if (s[n - 1] != ']') { err(c, line, "A section's name ends with ]", NULL, NULL); ps.sec = SEC_NONE; ps.line = line; continue; }
             s[n - 1] = 0;
             s++;
             while (*s == ' ' || *s == '\t') s++;
@@ -718,14 +751,14 @@ int eup_parse(EupConfig *c, const char *in, long len)
             section(c, &ps, s, line);
             continue;
         }
-        if (!(k = strchr(s, '='))) { err(c, line, "not a key = value, a [section], or a comment", NULL, NULL); continue; }
+        if (!(k = strchr(s, '='))) { err(c, line, "Not a key = value, a [section], or a comment", NULL, NULL); continue; }
         *k = 0;
         {
             char *v = k + 1;
             int kn = (int)strlen(s);
             while (kn && (s[kn - 1] == ' ' || s[kn - 1] == '\t')) s[--kn] = 0;
             while (*v == ' ' || *v == '\t') v++;
-            if (!kn) { err(c, line, "a value without a key", NULL, NULL); continue; }
+            if (!kn) { err(c, line, "A value without a key", NULL, NULL); continue; }
             key(c, &ps, s, v, line);
         }
     }

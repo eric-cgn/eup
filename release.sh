@@ -1,6 +1,6 @@
 #!/bin/sh
 # The release, in dist/ (V is EUP_VERSION, from core/version.h):
-#   EUP-V.image              the Mac disk (Disk Copy 4.2, 800K): EUP, the Installer Shell, a Read Me,
+#   EUP-V.image              the Mac disk, EUP Program Disk (Disk Copy 4.2, 800K): EUP, the Installer Shell, a Read Me,
 #                            the licenses, and the Hello example, from prebuilt/ (./build-mac.sh makes those)
 #   EUP-V.bin, .hqx          the packager application, alone
 #   Installer-Shell-V.bin, .hqx   the installer program, alone, for other projects' builds
@@ -30,7 +30,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src -e V="$V" "$IMAGE"
 	$S/desktop $S/Desktop.bin prebuilt/EUP.bin "prebuilt/Installer Shell.bin"
 	D=build/EUP-$V.dsk
 	dd if=/dev/zero of=$D bs=1024 count=800 2>/dev/null
-	hformat -l "EUP $V" $D >/dev/null
+	hformat -l "EUP Program Disk" $D >/dev/null
 	hmount $D >/dev/null
 	hcopy -m prebuilt/EUP.bin :
 	hcopy -m "prebuilt/Installer Shell.bin" :
@@ -47,7 +47,7 @@ docker run --rm --platform linux/amd64 -v "$PWD":/src -w /src -e V="$V" "$IMAGE"
 	hls -laR : | sed -n "1,40p"
 	hvol | grep -i free || true
 	humount
-	$S/dc42 $D "EUP $V" dist/EUP-$V.image
+	$S/dc42 $D "EUP Program Disk" dist/EUP-$V.image
 	cp prebuilt/EUP.bin dist/EUP-$V.bin
 	cp "prebuilt/Installer Shell.bin" dist/Installer-Shell-$V.bin
 	$S/hqx prebuilt/EUP.bin dist/EUP-$V.hqx

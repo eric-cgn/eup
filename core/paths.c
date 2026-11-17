@@ -87,6 +87,14 @@ int eup_same_path(const EupPath *a, const EupPath *b)
     return 1;
 }
 
+int eup_path_in(const EupPath *a, const EupPath *b)
+{
+    int i;
+    if (a->n < b->n) return 0;
+    for (i = 0; i < b->n; i++) if (!eup_same_name(a->names[i], b->names[i])) return 0;
+    return 1;
+}
+
 /* One name from s[0..n), %% made %; NULL and why if it breaks a rule */
 static PStr name_of(EupConfig *c, const char *s, int n, char *why)
 {
@@ -101,7 +109,7 @@ static PStr name_of(EupConfig *c, const char *s, int n, char *why)
         buf[k++] = s[i];
     }
     buf[k] = 0;
-    if (k == 0) { eup_fmt(why, "an empty name (two colons together, or nothing between them)", NULL, NULL); return NULL; }
+    if (k == 0) { eup_fmt(why, "an empty name (two colons together)", NULL, NULL); return NULL; }
     if (k > 31) { eup_fmt(why, "\"%s\" is longer than 31 characters", buf, NULL); return NULL; }
     if (buf[0] == '.') { eup_fmt(why, "\"%s\" starts with a period", buf, NULL); return NULL; }
     for (i = 0; i < k; i++)
@@ -111,7 +119,7 @@ static PStr name_of(EupConfig *c, const char *s, int n, char *why)
 
 PStr eup_name(EupConfig *c, const char *s, char *why)
 {
-    if (strchr(s, ':')) { eup_fmt(why, "\"%s\": a name has no colon", s, NULL); return NULL; }
+    if (strchr(s, ':')) { eup_fmt(why, "\"%s\": a name can\'t have a colon", s, NULL); return NULL; }
     return name_of(c, s, (int)strlen(s), why);
 }
 
@@ -138,12 +146,12 @@ int eup_split_path(EupConfig *c, const char *s, int kind, EupPath *out, char *wh
             memcpy(sub, p, k);
             sub[k] = 0;
             for (i = 0; LATER[i]; i++)
-                if (!strcmp(sub, LATER[i])) { eup_fmt(why, "%s is not in EUP 1.0: everything goes inside %%chosen%%", sub, NULL); return 0; }
-            eup_fmt(why, "%s is not a substitution (the one there is is %%chosen%%)", sub, NULL);
+                if (!strcmp(sub, LATER[i])) { eup_fmt(why, "%s is not in this version of EUP: everything goes inside %%chosen%%", sub, NULL); return 0; }
+            eup_fmt(why, "%s is not a substitution (the only one is %%chosen%%)", sub, NULL);
             return 0;
         }
     } else if (kind == EUP_INSTALLED && p[0] != ':' && strchr(p, ':')) {
-        eup_fmt(why, "\"%s\" starts with a disk's name; in EUP 1.0 everything goes inside %%chosen%%", s, NULL);
+        eup_fmt(why, "\"%s\" starts with a disk's name; everything goes inside %%chosen%%", s, NULL);
         return 0;
     }
     if (*p == ':') p++;

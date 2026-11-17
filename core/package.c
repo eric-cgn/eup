@@ -171,7 +171,7 @@ static int add(EupPackage *p, int k, PStr *names, int n, const EupStat *st, int 
         if (m->as) memcpy(it->name, m->as, m->as[0] + 1);
     }
     p->total += st->dlen + st->rlen;
-    if (p->nitems > EUP_MAX_FILES) { perr(c, m->line, "more than 2000 files", NULL, NULL); return -1; }
+    if (p->nitems > EUP_MAX_FILES) { perr(c, m->line, "More than 2,000 files", NULL, NULL); return -1; }
     return 0;
 }
 
@@ -195,14 +195,14 @@ static int walk(EupPackage *p, int k, PStr *names, int n, int depth)
         EupStat st;
         if (r < 0) {
             path_text(names, n, where, 120);
-            perr(c, c->comps[k].line, "in \"%s\": %s", where, why);
+            perr(c, c->comps[k].line, "In \"%s\": %s", where, why);
             continue;
         }
         if (name[0] && name[1] == '.') continue;        /* hidden */
         if (name[0] > 31) {
             name[name[0] + 1 > 255 ? 255 : name[0] + 1] = 0;
             path_text(names, n, where, 120);
-            perr(c, c->comps[k].line, "in \"%s\": \"%s\" is longer than 31 characters", where, (char *)name + 1);
+            perr(c, c->comps[k].line, "In \"%s\": \"%s\" is longer than 31 characters", where, (char *)name + 1);
             continue;
         }
         if (!(sub = names_copy(c, names, n, name))) { err = -1; break; }
@@ -248,7 +248,7 @@ int eup_pack_check(const EupPackIn *in, EupPackage **pack)
     EupPackage *p;
     int k, i, j;
     *pack = NULL;
-    if (!(p = (EupPackage *)calloc(1, sizeof *p))) { perr(c, 0, "out of memory", NULL, NULL); return c->nerrors; }
+    if (!(p = (EupPackage *)calloc(1, sizeof *p))) { perr(c, 0, "Out of memory", NULL, NULL); return c->nerrors; }
     p->in = *in;
     p->c = c;
     for (k = 0; k < c->ncomps; k++) {
@@ -385,7 +385,7 @@ static int pack_fork(Run *r, Item *it, int fork, EupDeflate *z, unsigned char *b
         if (it->convert && !fork) {
             n = convert(&v, buf, n, conv);
             b = conv;
-            if (v.bad) { fs->close(f); eup_fmt(why, "\"%s\" has a character that Mac Roman doesn't (it's read as UTF-8 text)", where, NULL); return -1; }
+            if (v.bad) { fs->close(f); eup_fmt(why, "\"%s\" has a character that Mac Roman doesn't have (it's read as UTF-8 text)", where, NULL); return -1; }
         }
         *len += n;
         if (z ? eup_deflate_data(z, b, n) : data_out(r, b, n)) { fs->close(f); eup_fmt(why, "the installer can't be written", NULL, NULL); return -1; }
@@ -427,7 +427,7 @@ static unsigned char *read_text(EupPackage *p, const EupPath *path, unsigned lon
         if (v.bad || v.ncarry) {
             free(raw);
             free(out);
-            eup_fmt(why, "\"%s\" has a character that Mac Roman doesn't (it's read as UTF-8 text)", where, NULL);
+            eup_fmt(why, "\"%s\" has a character that Mac Roman doesn't have (it's read as UTF-8 text)", where, NULL);
             return NULL;
         }
     } else {
@@ -598,8 +598,8 @@ int eup_pack(EupPackage *p, EupPackOut *out, char *why)
         memcpy(v, c->vers, 4);
         v[4] = v[5] = 0;            /* the U.S. */
         n = 6;
-        memcpy(v + n, c->version, c->version[0] + 1);
-        n += 1 + c->version[0];
+        memcpy(v + n, c->version_string, c->version_string[0] + 1);
+        n += 1 + c->version_string[0];
         memcpy(v + n, c->get_info, c->get_info[0] + 1);
         n += 1 + c->get_info[0];
         if (eup_rwrite_add(w, OSTYPE('v', 'e', 'r', 's'), 1, NULL, 0, v, n)) goto done;

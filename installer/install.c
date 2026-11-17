@@ -17,13 +17,14 @@
 #include "../core/inflate.h"
 
 /* One window, 440 by 256, for every stage; the program draws what's in it over a user item, around the buttons */
-enum { PROG = 130, WIN = 128, B_PRIMARY = 1, B_QUIT, B_CHOOSE, CANVAS };
+enum { PROG = 130, WIN = 128, ABOUT = 132, B_PRIMARY = 1, B_QUIT, B_CHOOSE, CANVAS };
+enum { M_APPLE = 128, M_FILE, M_EDIT };
 enum { S_DESC, S_LICENSE, S_INSTALL };
 
 /* EUP's own strings: 'STR#' 128 */
 enum { STR_INSTALL = 1, STR_QUIT, STR_CHOOSE, STR_OK, STR_CONTINUE, STR_AGREE, STR_DISAGREE, STR_SPACE, STR_LOCATION,
        STR_ITEMS_GO, STR_INSTALL_IN, STR_INSTALLED, STR_CANCELED, STR_FAILED, STR_FOLDER_FAILED, STR_INSTALLING,
-       STR_REMOVING, STR_AGREE_NOTE, STR_K };
+       STR_REMOVING, STR_AGREE_NOTE, STR_K, STR_ABOUT, STR_IN_USE, STR_NOT_REPLACED, STR_REQUIRED };
 
 enum { PIECE = 4096 };              /* the payload is read this much at a time */
 
@@ -185,6 +186,8 @@ typedef struct {
 static short place_vref;    /* the install folder: volume and directory */
 static long place_dir;
 
+static void put_folder(short vref, long parent, ConstStr255Param name, const Point *loc, const Rect *window, Boolean made);
+
 static OSErr dir_of(short vref, long parent, ConstStr255Param name, long *dir)
 {
     HParamBlockRec h;
@@ -195,7 +198,11 @@ static OSErr dir_of(short vref, long parent, ConstStr255Param name, long *dir)
     h.fileParam.ioVRefNum = vref;
     h.fileParam.ioDirID = parent;
     err = PBDirCreateSync(&h);
-    if (err == noErr) { *dir = h.fileParam.ioDirID; return noErr; }
+    if (err == noErr) {
+        *dir = h.fileParam.ioDirID;
+        put_folder(vref, parent, name, NULL, NULL, true);
+        return noErr;
+    }
     if (err != dupFNErr) return err;
     memset(&c, 0, sizeof c);
     c.dirInfo.ioNamePtr = (StringPtr)name;
@@ -234,14 +241,55 @@ static short what_is(short vref, long dir, ConstStr255Param name)
     return (c.hFileInfo.ioFlAttrib & 16) ? 2 : 1;
 }
 
-static void remove_file(short vref, long dir, ConstStr255Param name)
+static OSErr remove_file(short vref, long dir, ConstStr255Param name)
 {
     HParamBlockRec h;
     memset(&h, 0, sizeof h);
     h.fileParam.ioNamePtr = (StringPtr)name;
     h.fileParam.ioVRefNum = vref;
     h.fileParam.ioDirID = dir;
-    PBHDeleteSync(&h);
+    return PBHDeleteSync(&h);
+}
+
+static OSErr rename_file(short vref, long dir, ConstStr255Param from, ConstStr255Param to)
+{
+    HParamBlockRec h;
+    memset(&h, 0, sizeof h);
+    h.ioParam.ioNamePtr = (StringPtr)from;
+    h.ioParam.ioVRefNum = vref;
+    h.fileParam.ioDirID = dir;
+    h.ioParam.ioMisc = (Ptr)to;
+    return PBHRenameSync(&h);
+}
+
+/* A file that's open, by an application that's running or one that has it open, can't be deleted: PBHDelete
+   returns fBsyErr (Inside Macintosh: Files). So before anything is written, the install looks for one in its
+   way, by ioFlAttrib bit 7, set while a file is open (Inside Macintosh IV, File Manager). The file it stopped
+   at, and whether it's an application: */
+static Str255 fail_name;
+static Boolean fail_app;
+
+static Boolean is_open(short vref, long dir, ConstStr255Param name)
+{
+    CInfoPBRec c;
+    memset(&c, 0, sizeof c);
+    c.hFileInfo.ioNamePtr = (StringPtr)name;
+    c.hFileInfo.ioVRefNum = vref;
+    c.hFileInfo.ioDirID = dir;
+    if (PBGetCatInfoSync(&c) != noErr || (c.hFileInfo.ioFlAttrib & 16) || !(c.hFileInfo.ioFlAttrib & 0x80)) return false;
+    pcopy(fail_name, name);
+    fail_app = c.hFileInfo.ioFlFndrInfo.fdType == 'APPL';
+    return true;
+}
+
+/* The name with n tildes in front, cut to 31 characters: ~Name while the file is written, ~~Name for the old
+   file while it's replaced */
+static void tilde(ConstStr255Param name, short n, Str255 out)
+{
+    short k = name[0] > 31 - n ? 31 - n : name[0];
+    out[0] = (unsigned char)(k + n);
+    memset(out + 1, '~', n);
+    memcpy(out + 1 + n, name + 1, k);
 }
 
 static OSErr put(short ref, const unsigned char *p, long n)
@@ -295,10 +343,7 @@ static OSErr begin_file(Out *o)
 {
     HParamBlockRec h;
     OSErr err;
-    short n = o->name[0] > 30 ? 30 : o->name[0];
-    o->tmp[0] = (unsigned char)(n + 1);
-    o->tmp[1] = '~';
-    memcpy(o->tmp + 2, o->name + 1, n);
+    tilde(o->name, 1, o->tmp);
     remove_file(o->vref, o->dir, o->tmp);
     memset(&h, 0, sizeof h);
     h.fileParam.ioNamePtr = o->tmp;
@@ -312,15 +357,22 @@ static OSErr begin_file(Out *o)
     return noErr;
 }
 
-/* Done with it: whole, it gets its type, creator, and flags and its name (replacing the old file); else it's deleted */
-static void end_file(Out *o, Boolean whole)
+/* Done with it: whole, it gets its type, creator, and flags and its name, replacing the old file; else it's
+   deleted. The old file goes aside as ~~Name, the new one takes its name, and then the old one is deleted; if a
+   step fails, the old file is put back as it was and the new one deleted, and the error returned. (An open file
+   can be renamed but not deleted, so one opened since the install began is found here.) */
+static OSErr end_file(Out *o, Boolean whole)
 {
     HParamBlockRec h;
+    Str255 old;
+    OSErr err;
+    short v = o->vref;
+    long d = o->dir;
     if (o->df) close_fork(o->df);
     if (o->rf) close_fork(o->rf);
     o->df = o->rf = 0;
-    if (!o->opened) return;
-    if (!whole) { remove_file(o->vref, o->dir, o->tmp); return; }
+    if (!o->opened) return noErr;
+    if (!whole) { remove_file(v, d, o->tmp); return noErr; }
     /* "inited" off so the Finder places it */
     memset(&h, 0, sizeof h);
     h.fileParam.ioNamePtr = o->tmp;
@@ -339,16 +391,196 @@ static void end_file(Out *o, Boolean whole)
         }
         PBHSetFInfoSync(&h);
     }
-    remove_file(o->vref, o->dir, o->name);
-    memset(&h, 0, sizeof h);
-    h.ioParam.ioNamePtr = o->tmp;
-    h.ioParam.ioVRefNum = o->vref;
-    h.fileParam.ioDirID = o->dir;
-    h.ioParam.ioMisc = (Ptr)o->name;
-    PBHRenameSync(&h);
+    switch (what_is(v, d, o->name)) {
+    case 0:
+        if ((err = rename_file(v, d, o->tmp, o->name)) != noErr) remove_file(v, d, o->tmp);
+        return err;
+    case 2:                                         /* a folder in the way */
+        remove_file(v, d, o->tmp);
+        return dupFNErr;
+    }
+    tilde(o->name, 2, old);
+    remove_file(v, d, old);
+    if ((err = rename_file(v, d, o->name, old)) != noErr) {
+        remove_file(v, d, o->tmp);
+        return err;
+    }
+    if ((err = rename_file(v, d, o->tmp, o->name)) != noErr) {
+        rename_file(v, d, old, o->name);
+        remove_file(v, d, o->tmp);
+        return err;
+    }
+    if ((err = remove_file(v, d, old)) != noErr) {
+        rename_file(v, d, o->name, o->tmp);
+        rename_file(v, d, old, o->name);
+        remove_file(v, d, o->tmp);
+        return err;
+    }
+    return noErr;
 }
 
-/* ---- the progress window, and Cancel: a click on the button, Escape, or Command-period ---- */
+/* ---- windows, menus, and events ---- */
+
+/* A window in the middle of the main screen, below the menu bar: screenBits.bounds is the main screen
+   (Inside Macintosh I, QuickDraw), and System 6 has no automatic positions for 'DLOG' */
+enum { MENU_BAR = 20, TITLE_BAR = 19 };
+
+static void center(WindowPtr w)
+{
+    Rect s = qd.screenBits.bounds;
+    short wd = w->portRect.right - w->portRect.left, ht = w->portRect.bottom - w->portRect.top;
+    short v = s.top + MENU_BAR + (s.bottom - s.top - MENU_BAR - TITLE_BAR - ht) / 2 + TITLE_BAR;
+    if (v < s.top + MENU_BAR + TITLE_BAR) v = s.top + MENU_BAR + TITLE_BAR;
+    MoveWindow(w, s.left + (s.right - s.left - wd) / 2, v, false);
+}
+
+static void ring(ControlHandle c);
+
+static Boolean quit_asked;          /* File > Quit: at once, or as a Cancel while installing */
+static Boolean busy;                /* installing: the watch cursor */
+static Boolean edit_on;
+
+static void about(void)
+{
+    Str255 s;
+    Handle h = Get1Resource('vers', 1);         /* the INI's get_info, after the short version */
+    DialogPtr d;
+    short item, type;
+    Rect r;
+    if (h && GetHandleSize(h) > 7) {
+        HLock(h);
+        pcopy(s, (unsigned char *)*h + 7 + (unsigned char)(*h)[6]);
+        HUnlock(h);
+    } else pcopy(s, cfg.title);
+    ParamText(s, "\p", "\p", "\p");
+    if (!(d = GetNewDialog(ABOUT, NULL, (WindowPtr)-1))) return;
+    center(d);
+    ShowWindow(d);
+    SetPort(d);
+    DrawDialog(d);
+    GetDialogItem(d, 1, &type, &h, &r);
+    ring((ControlHandle)h);
+    InitCursor();
+    do ModalDialog(NULL, &item); while (item != 1);
+    DisposeDialog(d);
+    if (busy) SetCursor(*GetCursor(watchCursor));
+}
+
+/* Edit is for a desk accessory in front */
+static void adjust_menus(void)
+{
+    WindowPtr w = FrontWindow();
+    Boolean on = w && ((WindowPeek)w)->windowKind < 0;
+    if (on == edit_on) return;
+    edit_on = on;
+    if (on) EnableItem(GetMenuHandle(M_EDIT), 0); else DisableItem(GetMenuHandle(M_EDIT), 0);
+    DrawMenuBar();
+}
+
+static void do_menu(long choice)
+{
+    short m = HiWord(choice), item = LoWord(choice);
+    if (m == M_APPLE) {
+        if (item == 1) about();
+        else {
+            Str255 da;
+            GrafPtr save;
+            GetPort(&save);
+            GetMenuItemText(GetMenuHandle(M_APPLE), item, da);
+            OpenDeskAcc(da);
+            SetPort(save);
+        }
+    } else if (m == M_FILE) quit_asked = true;
+    else if (m == M_EDIT) SystemEdit(item - 1);
+    HiliteMenu(0);
+}
+
+static void set_menus(void)
+{
+    Str255 name, s;
+    short ref;
+    Handle h;
+    MenuHandle apple;
+    SetMenuBar(GetNewMBar(128));
+    apple = GetMenuHandle(M_APPLE);
+    GetAppParms(name, &ref, &h);
+    fmt(s, STR_ABOUT, name, NULL);
+    SetMenuItemText(apple, 1, s);
+    AppendResMenu(apple, 'DRVR');
+    DrawMenuBar();
+}
+
+typedef pascal Boolean (*Filter)(DialogPtr d, EventRecord *e, short *item);
+
+enum { suspend_resume = 1, resume_flag = 1 };
+
+/* One event, handled the way an application with a modeless dialog handles it (Inside Macintosh I, Dialog
+   Manager: IsDialogEvent and DialogSelect), so the menus work, desk accessories and other windows are
+   redrawn, and under MultiFinder and System 7 the user can switch to other applications; on a suspend or
+   resume event the window is made inactive or active (Programmer's Guide to MultiFinder). True if an item
+   of d was hit: *item. The filter, if any, sees d's clicks and keys first, as ModalDialog's would. */
+static Boolean dialog_event(EventRecord *e, DialogPtr d, Filter filt, short *item)
+{
+    WindowPtr w;
+    DialogPtr hit;
+    switch (e->what) {
+    case mouseDown:
+        switch (FindWindow(e->where, &w)) {
+        case inMenuBar: adjust_menus(); do_menu(MenuSelect(e->where)); return false;
+        case inSysWindow: SystemClick(e, w); return false;
+        case inDrag:
+            if (w == (WindowPtr)d && w == FrontWindow()) {
+                Rect limit = qd.screenBits.bounds;
+                InsetRect(&limit, 4, 4);
+                DragWindow(w, e->where, &limit);
+                return false;
+            }
+            /* else as a click in it */
+        case inContent:
+            if (w != FrontWindow()) { SelectWindow(w); return false; }
+            if (w != (WindowPtr)d) return false;
+            break;
+        default: return false;
+        }
+        break;
+    case keyDown:
+    case autoKey:
+        if (e->modifiers & cmdKey) {
+            long m;
+            adjust_menus();
+            if (HiWord(m = MenuKey(e->message & charCodeMask))) { do_menu(m); return false; }
+        }
+        if (FrontWindow() != (WindowPtr)d) return false;
+        break;
+    case osEvt:
+        if (((e->message >> 24) & 0xFF) == suspend_resume) {
+            Boolean on = (e->message & resume_flag) != 0;
+            if ((w = FrontWindow())) HiliteWindow(w, on);
+            if (on) { if (busy) SetCursor(*GetCursor(watchCursor)); else InitCursor(); }
+        }
+        return false;
+    default:
+        break;
+    }
+    if (filt && (e->what == mouseDown || e->what == keyDown || e->what == autoKey) && filt(d, e, item)) return true;
+    return IsDialogEvent(e) && DialogSelect(e, &hit, item) && hit == d;
+}
+
+/* Events until an item of d is hit (true), or File > Quit (false) */
+static Boolean next_item(DialogPtr d, Filter filt, short *item)
+{
+    EventRecord e;
+    while (!quit_asked) {
+        SystemTask();
+        if (GetNextEvent(everyEvent, &e) && dialog_event(&e, d, filt, item)) {
+            SetPort(d);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* ---- the progress window, and Cancel: a click on the button, Escape, Command-period, or Quit ---- */
 
 static DialogPtr prog_dlg;
 static ControlHandle c_primary, c_cancel;
@@ -376,25 +608,20 @@ static void prog_add(long n)
     SetPort(save);
 }
 
+/* Every event while installing, so other windows and applications go on; true for a Cancel */
 static Boolean poll_cancel(void)
 {
     EventRecord e;
-    while (GetNextEvent(mDownMask | keyDownMask | autoKeyMask, &e)) {
-        if (e.what == mouseDown) {
-            Point p = e.where;
-            ControlHandle c;
-            WindowPtr w;
-            if (prog_dlg && FindWindow(p, &w) == inContent && w == (WindowPtr)prog_dlg) {
-                SetPort(prog_dlg);
-                GlobalToLocal(&p);
-                if (FindControl(p, prog_dlg, &c) && c == c_cancel && TrackControl(c, p, NULL)) return true;
-            }
-        } else {
+    short item;
+    SystemTask();
+    while (!quit_asked && GetNextEvent(everyEvent, &e)) {
+        if ((e.what == keyDown || e.what == autoKey) && FrontWindow() == (WindowPtr)prog_dlg) {
             char ch = e.message & charCodeMask;
             if (ch == 27 || (ch == '.' && (e.modifiers & cmdKey))) return true;
         }
+        if (prog_dlg && dialog_event(&e, prog_dlg, NULL, &item) && item == 1) return true;
     }
-    return false;
+    return quit_asked;
 }
 
 /* inflate's output: the data fork, then the resource fork */
@@ -430,7 +657,39 @@ static Boolean place_of(ConstStr255Param name, Point *loc)
     return false;
 }
 
-static void put_folder(short vref, long parent, ConstStr255Param name, const Point *loc, const Rect *window)
+/* A folder's Finder information (DInfo): its place in its parent's window, and its own window. The Finder
+   keeps a place only with "has been inited" (0x0100) set; with it clear, it puts the item in the first empty
+   space in the window and sets it (Technical Note TB 42, "Finder Icon Positioning and File Initialization").
+   So the flag is set only with a place. A folder the installer made opens by Icon: frView is "set by the
+   user with commands from the View menu" (Inside Macintosh: Macintosh Toolbox Essentials, Finder
+   Interface, DInfo), with no values given; 0x0100 is what the Finder of System 6.0.8 and 7.0.1 writes in a
+   new folder, which opens by Icon, and 0 opens by Small Icon. A folder that was there keeps its view.
+   A folder the installer made also gets a window (frRect, "the rectangle of the window that the Finder displays
+   when the user opens the folder"). The Finder of System 6 gives an unplaced folder a window of its own, but
+   keeps a placed one's as it is: with none, it lays out the folder's icons one under another. The window is
+   its parent's moved down and right, as the Finder opens one, or, if that's empty or off the screen, the
+   window the Finder of 6.0.8 gives a new folder on a Mac Plus. */
+enum { INITED = 0x0100, VIEW_BY_ICON = 0x0100, INVISIBLE = 0x4000, ON_DESK = 0x0001, STAGGER = 20 };
+
+static void new_window(short vref, long parent, Rect *r)
+{
+    CInfoPBRec c;
+    Rect s = qd.screenBits.bounds;
+    memset(&c, 0, sizeof c);
+    c.dirInfo.ioVRefNum = vref;
+    c.dirInfo.ioDrDirID = parent;
+    c.dirInfo.ioFDirIndex = -1;
+    if (PBGetCatInfoSync(&c) == noErr) {
+        *r = c.dirInfo.ioDrUsrWds.frRect;
+        OffsetRect(r, STAGGER, STAGGER);
+        if (r->right - r->left >= 120 && r->bottom - r->top >= 80 && r->left >= s.left && r->top >= s.top + 40 &&
+            r->right <= s.right && r->bottom <= s.bottom)
+            return;
+    }
+    SetRect(r, 24, 82, 428, 270);
+}
+
+static void put_folder(short vref, long parent, ConstStr255Param name, const Point *loc, const Rect *window, Boolean made)
 {
     CInfoPBRec c;
     memset(&c, 0, sizeof c);
@@ -438,19 +697,70 @@ static void put_folder(short vref, long parent, ConstStr255Param name, const Poi
     c.dirInfo.ioVRefNum = vref;
     c.dirInfo.ioDrDirID = parent;
     if (PBGetCatInfoSync(&c) != noErr) return;
-    if (loc) c.dirInfo.ioDrUsrWds.frLocation = *loc;
+    if (loc) {
+        c.dirInfo.ioDrUsrWds.frLocation = *loc;
+        c.dirInfo.ioDrUsrWds.frFlags |= INITED;
+    }
     if (window) c.dirInfo.ioDrUsrWds.frRect = *window;
-    c.dirInfo.ioDrUsrWds.frFlags |= 0x0100;
+    else if (made) new_window(vref, parent, &c.dirInfo.ioDrUsrWds.frRect);
+    if (made) c.dirInfo.ioDrUsrWds.frView = VIEW_BY_ICON;
     c.dirInfo.ioNamePtr = (StringPtr)name;
     c.dirInfo.ioDrDirID = parent;
     PBSetCatInfoSync(&c);
 }
 
-/* The install folder's own window, if the INI gives one */
-static void size_window(short vref, long dir)
+/* A free place in a folder's window, as the Finder would find one: the first space, row by row on a 64-pixel
+   grid across the window, that no placed icon is in */
+enum { GRID = 64, MOST_PLACED = 200 };
+
+static Boolean free_place(short vref, long parent, Point *loc)
+{
+    Point *at;
+    short n = 0, i, width = 400, h, v;
+    Str255 name;
+    CInfoPBRec c;
+    if (!(at = (Point *)NewPtr(sizeof(Point) * MOST_PLACED))) return false;
+    memset(&c, 0, sizeof c);
+    c.dirInfo.ioNamePtr = name;
+    c.dirInfo.ioVRefNum = vref;
+    c.dirInfo.ioDrDirID = parent;
+    c.dirInfo.ioFDirIndex = -1;
+    if (PBGetCatInfoSync(&c) == noErr && c.dirInfo.ioDrUsrWds.frRect.right - c.dirInfo.ioDrUsrWds.frRect.left > GRID + 16)
+        width = c.dirInfo.ioDrUsrWds.frRect.right - c.dirInfo.ioDrUsrWds.frRect.left - 16;      /* less the scroll bar */
+    for (i = 1; n < MOST_PLACED; i++) {
+        unsigned short flags;
+        memset(&c, 0, sizeof c);
+        c.hFileInfo.ioNamePtr = name;
+        c.hFileInfo.ioVRefNum = vref;
+        c.hFileInfo.ioDirID = parent;
+        c.hFileInfo.ioFDirIndex = i;
+        if (PBGetCatInfoSync(&c) != noErr) break;
+        if (c.hFileInfo.ioFlAttrib & 16) { flags = c.dirInfo.ioDrUsrWds.frFlags; at[n] = c.dirInfo.ioDrUsrWds.frLocation; }
+        else { flags = c.hFileInfo.ioFlFndrInfo.fdFlags; at[n] = c.hFileInfo.ioFlFndrInfo.fdLocation; }
+        if ((flags & INITED) && !(flags & (INVISIBLE | ON_DESK))) n++;
+    }
+    for (v = 0; v < 100 * GRID; v += GRID)
+        for (h = 0; h == 0 || h + GRID <= width; h += GRID) {
+            for (i = 0; i < n; i++)
+                if (at[i].h > h - GRID && at[i].h < h + GRID && at[i].v > v - GRID && at[i].v < v + GRID) break;
+            if (i == n) {
+                loc->h = h;
+                loc->v = v;
+                DisposePtr((Ptr)at);
+                return true;
+            }
+        }
+    DisposePtr((Ptr)at);
+    return false;
+}
+
+/* The install folder's own window, if the INI gives one. A folder just made gets a free place too: left to
+   the Finder, it would get the Finder's own window when the Finder placed it. */
+static void size_window(short vref, long dir, Boolean made)
 {
     Str255 name;
     CInfoPBRec c;
+    Point loc;
     Rect r;
     if (!cfg.has_window) return;
     memset(&c, 0, sizeof c);
@@ -460,7 +770,7 @@ static void size_window(short vref, long dir)
     c.dirInfo.ioFDirIndex = -1;
     if (PBGetCatInfoSync(&c) != noErr) return;
     SetRect(&r, cfg.window[0], cfg.window[1], cfg.window[0] + cfg.window[2], cfg.window[1] + cfg.window[3]);
-    put_folder(vref, c.dirInfo.ioDrParID, name, NULL, &r);
+    put_folder(vref, c.dirInfo.ioDrParID, name, made && free_place(vref, c.dirInfo.ioDrParID, &loc) ? &loc : NULL, &r, false);
 }
 
 /* Into a folder, made if need be, on the way down from the install folder; a folder there gets its place */
@@ -469,8 +779,22 @@ static OSErr into(long *dir, ConstStr255Param name)
     long parent = *dir;
     Point loc;
     OSErr err = dir_of(place_vref, parent, name, dir);
-    if (!err && parent == place_dir && place_of(name, &loc)) put_folder(place_vref, parent, name, &loc, NULL);
+    if (!err && parent == place_dir && place_of(name, &loc)) put_folder(place_vref, parent, name, &loc, NULL, false);
     return err;
+}
+
+/* Whether the file name in folder dir is one the INI says to keep, and it's there */
+static Boolean kept(long dir, ConstStr255Param name)
+{
+    short i, j;
+    for (i = 0; i < cfg.nkeep; i++) {
+        const EupPath *kp = &cfg.keep[i];
+        long kd = place_dir;
+        for (j = 0; j < kp->n - 1 && find_dir(place_vref, kd, kp->names[j], &kd) == noErr; j++) ;
+        if (j == kp->n - 1 && kd == dir && eup_same_name(kp->names[kp->n - 1], name) && what_is(place_vref, dir, name) == 1)
+            return true;
+    }
+    return false;
 }
 
 /* One record of component k into the install folder: a folder, or a file from the payload */
@@ -490,16 +814,9 @@ static OSErr install_record(short k, short index)
     for (i = 0; i < m->destination.n; i++) if ((err = into(&dir, m->destination.names[i])) != noErr) return err;
     for (i = 0; i < nrest - 1; i++, rest += 1 + rest[0]) if ((err = into(&dir, rest)) != noErr) return err;
     if (o.rec.kind == EUP_REC_FOLDER) return into(&dir, o.rec.name);
-    /* a file: kept if it's one the INI says to keep and it's there */
-    for (i = 0; i < cfg.nkeep; i++) {
-        const EupPath *kp = &cfg.keep[i];
-        long kd = place_dir;
-        short j;
-        for (j = 0; j < kp->n - 1 && find_dir(place_vref, kd, kp->names[j], &kd) == noErr; j++) ;
-        if (j == kp->n - 1 && kd == dir && eup_same_name(kp->names[kp->n - 1], o.rec.name) && what_is(place_vref, dir, o.rec.name) == 1) {
-            prog_add((long)(o.rec.dlen + o.rec.rlen));
-            return noErr;
-        }
+    if (kept(dir, o.rec.name)) {
+        prog_add((long)(o.rec.dlen + o.rec.rlen));
+        return noErr;
     }
     o.vref = place_vref;
     o.dir = dir;
@@ -520,7 +837,12 @@ static OSErr install_record(short k, short index)
         if (z) gz_end(z);
         if (!o.err && (r < 0 || o.at != (long)(o.rec.dlen + o.rec.rlen))) o.err = paramErr;   /* the payload is damaged */
     }
-    end_file(&o, o.err == noErr);
+    if ((err = end_file(&o, o.err == noErr)) != noErr) {
+        o.err = err;
+        pcopy(fail_name, o.name);
+        fail_app = o.rec.type == 'APPL';
+        is_open(o.vref, o.dir, o.name);         /* the old file's own type, if it's open */
+    }
     DisposePtr((Ptr)buf);
     return o.err;
 }
@@ -549,9 +871,8 @@ static void ring(ControlHandle c)
 }
 
 /* Text cut to fit in width, with an ellipsis, in the current font */
-static void draw_fit(ConstStr255Param t, short width)
+static void fit(Str255 s, ConstStr255Param t, short width)
 {
-    Str255 s;
     short n;
     pcopy(s, t);
     n = s[0];
@@ -563,6 +884,12 @@ static void draw_fit(ConstStr255Param t, short width)
             n--;
         }
     }
+}
+
+static void draw_fit(ConstStr255Param t, short width)
+{
+    Str255 s;
+    fit(s, t, width);
     DrawString(s);
 }
 
@@ -968,6 +1295,49 @@ static void set_mode(DialogPtr d, short m)
     }
 }
 
+/* Save on an earlier install. Standard File would refuse it: the name of a folder that's there ("That name is
+   already used by a folder" on System 7), or, in the install, the name of the application in it ("Replace
+   existing…?"). So the hook takes it first, as the install folder, and ends the dialog with Cancel: a folder
+   named that holds the detect file, else the folder shown if it holds the detect file. The folder shown is
+   in SFSaveDisk (the volume, negated) and CurDirStore (Inside Macintosh IV, Standard File Package); the name
+   is the dialog's one editText item (editField, Inside Macintosh I, Dialog Manager), item 7 on System 6 and
+   10 on System 7. On System 7, CustomPutFile: SFPPutFile with a hook would give the old dialog, without New
+   Folder; its hook is called for the dialogs over it too, which have their own refCon (Inside Macintosh:
+   Files, Standard File Package). */
+static Boolean hook_found;
+static short hook_vol;
+static long hook_parent, hook_dir;
+static Str255 hook_name;
+
+static pascal short choose_hook(short item, DialogPtr d)
+{
+    short type, vol;
+    Handle h;
+    Rect r;
+    long dir, sub;
+    if (item != putSave || !cfg.detect || ((DialogPeek)d)->editField < 0) return item;
+    vol = -LMGetSFSaveDisk();
+    dir = LMGetCurDirStore();
+    GetDialogItem(d, ((DialogPeek)d)->editField + 1, &type, &h, &r);
+    GetDialogItemText(h, hook_name);
+    if (hook_name[0] && find_dir(vol, dir, hook_name, &sub) == noErr && what_is(vol, sub, cfg.detect) == 1) hook_dir = sub;
+    else if (what_is(vol, dir, cfg.detect) == 1) hook_dir = dir;
+    else return item;
+    hook_found = true;
+    hook_vol = vol;
+    hook_parent = dir;
+    return putCancel;
+}
+
+static pascal short choose_hook7(short item, DialogPtr d, void *data)
+{
+    (void)data;
+    if (GetWRefCon(d) != sfMainDialogRefCon) return item;
+    return choose_hook(item, d);
+}
+
+static Boolean sys7;                /* System 7 or later: its Standard File */
+
 static void choose_place(void)
 {
     SFReply reply;
@@ -975,10 +1345,33 @@ static void choose_place(void)
     WDPBRec wd;
     Str255 prompt;
     long dir;
-    where.h = 90;
-    where.v = 70;
+    Handle h = GetResource('DLOG', putDlgID);   /* Standard File's own dialog (Inside Macintosh I, Standard File Package) */
+    Rect s = qd.screenBits.bounds, r;
+    if (h) r = **(Rect **)h; else SetRect(&r, 0, 0, 304, 104);
+    where.h = s.left + (s.right - s.left - (r.right - r.left)) / 2;       /* in the middle of the main screen too */
+    where.v = s.top + MENU_BAR + (s.bottom - s.top - MENU_BAR - (r.bottom - r.top)) / 2;
     fmt(prompt, STR_INSTALL_IN, cfg.product, NULL);
-    SFPutFile(where, prompt, place_name, NULL, &reply);
+    hook_found = false;
+    if (sys7) {
+        StandardFileReply r7;
+        where.h = where.v = -1;     /* centered */
+        CustomPutFile(prompt, place_name, &r7, sfPutDialogID, where, (DlgHookYDUPP)choose_hook7, NULL, NULL, NULL, NULL);
+        reply.good = r7.sfGood && !hook_found;
+        if (reply.good) {
+            place_vol = r7.sfFile.vRefNum;
+            place_parent = r7.sfFile.parID;
+            place_found = cfg.detect && what_is(place_vol, place_parent, cfg.detect) == 1 ? place_parent : 0;
+            pcopy(place_name, r7.sfFile.name);
+            return;
+        }
+    } else SFPPutFile(where, prompt, place_name, (DlgHookUPP)choose_hook, &reply, putDlgID, NULL);
+    if (hook_found) {
+        place_vol = hook_vol;
+        place_parent = hook_parent;
+        place_found = hook_dir;
+        pcopy(place_name, hook_name);
+        return;
+    }
     if (!reply.good) return;
     memset(&wd, 0, sizeof wd);
     wd.ioVRefNum = reply.vRefNum;
@@ -989,11 +1382,29 @@ static void choose_place(void)
     pcopy(place_name, reply.fName);
 }
 
+/* With require: whether there's an earlier install to go into, found as detect finds one: the install folder
+   (place_found), or a folder of the install folder's name in the place, which is how Install Location's
+   default, a folder at the top of the startup disk, is found. Checked again at Install, so a file moved or
+   removed since Choose… counts. */
+static Boolean found_earlier(void)
+{
+    long sub;
+    if (place_found) return what_is(place_vol, place_found, cfg.detect) == 1;
+    if (find_dir(place_vol, place_parent, place_name, &sub) != noErr || what_is(place_vol, sub, cfg.detect) != 1) return false;
+    place_found = sub;
+    return true;
+}
+
+static Boolean place_made;          /* the install folder is new */
+
 /* The folder to install in, made if need be */
+
 static OSErr resolve_place(void)
 {
     place_vref = place_vol;
+    place_made = false;
     if (place_found) { place_dir = place_found; return noErr; }
+    place_made = what_is(place_vol, place_parent, place_name) == 0;
     return dir_of(place_vol, place_parent, place_name, &place_dir);
 }
 
@@ -1007,6 +1418,7 @@ static void open_progress(void)
     Rect r;
     prog_dlg = GetNewDialog(PROG, NULL, (WindowPtr)-1);
     if (!prog_dlg) return;
+    center(prog_dlg);
     SetWTitle(prog_dlg, cfg.title);
     GetDialogItem(prog_dlg, 1, &type, &h, &r);
     c_cancel = (ControlHandle)h;
@@ -1031,17 +1443,35 @@ static pascal Boolean prog_filter(DialogPtr d, EventRecord *e, short *item)
     return false;
 }
 
+static void prog_center(ConstStr255Param t, short v)
+{
+    Str255 s;
+    fit(s, t, 276);
+    MoveTo(12 + (276 - StringWidth(s)) / 2, v);
+    DrawString(s);
+}
+
+/* The line; at the end, a return in it makes two */
 static void prog_text(ConstStr255Param t)
 {
     Rect r;
     GrafPtr save;
+    Str255 a;
+    short i;
     GetPort(&save);
     SetPort(prog_dlg);
-    SetRect(&r, 12, 12, 288, prog_over ? 46 : 42);    /* above the bar, which starts at 44 */
+    SetRect(&r, 12, 12, 288, prog_over ? 50 : 42);    /* above the bar, which starts at 44 */
     EraseRect(&r);
     big_font();
-    MoveTo(12 + (276 - StringWidth(t)) / 2, prog_over ? 42 : 28);
-    DrawString(t);
+    for (i = 1; i <= t[0] && t[i] != '\r'; i++) ;
+    if (prog_over && i <= t[0]) {
+        a[0] = (unsigned char)(i - 1);
+        memcpy(a + 1, t + 1, a[0]);
+        prog_center(a, 30);
+        a[0] = (unsigned char)(t[0] - i);
+        memcpy(a + 1, t + i + 1, a[0]);
+        prog_center(a, 46);
+    } else prog_center(t, prog_over ? 42 : 28);
     if (t != prog_line) pcopy(prog_line, t);
     SetPort(save);
 }
@@ -1076,8 +1506,9 @@ static void prog_finish(ConstStr255Param text, short button)
     EraseRect(&r);
     pcopy(prog_line, text);
     prog_draw(prog_dlg, 2);
+    busy = false;
     InitCursor();
-    do ModalDialog((ModalFilterUPP)prog_filter, &item); while (item != 1);
+    while (next_item(prog_dlg, prog_filter, &item) && item != 1) ;
 }
 
 static void close_progress(void)
@@ -1086,15 +1517,18 @@ static void close_progress(void)
     prog_dlg = NULL;
 }
 
-/* An old name from an earlier version, gone if it's there (a folder only if it's empty) */
+/* An old name from an earlier version, gone if it's there (a folder only if it's empty), unless the INI keeps
+   it or a folder it's in */
 static Boolean removing;
 
 static OSErr retire(const EupPath *p)
 {
     short k;
     long dir = place_dir;
+    for (k = 0; k < cfg.nkeep; k++) if (eup_path_in(p, &cfg.keep[k])) return noErr;
     for (k = 0; k < p->n - 1; k++) if (find_dir(place_vref, dir, p->names[k], &dir) != noErr) return noErr;
     if (!what_is(place_vref, dir, p->names[p->n - 1])) return noErr;
+    if (is_open(place_vref, dir, p->names[p->n - 1])) return fBsyErr;
     if (poll_cancel()) return userCanceledErr;
     if (!removing) {
         Str255 s;
@@ -1106,11 +1540,45 @@ static OSErr retire(const EupPath *p)
     return noErr;
 }
 
+/* Before anything is written: whether a file the install would replace or remove is open (is_open) */
+static OSErr preflight(void)
+{
+    short i, j, k;
+    if (cfg.types[mode].remove_old)
+        for (i = 0; i < cfg.nremove; i++) {
+            const EupPath *p = &cfg.remove[i];
+            long dir = place_dir;
+            for (k = 0; k < cfg.nkeep && !eup_path_in(p, &cfg.keep[k]); k++) ;
+            if (k < cfg.nkeep) continue;
+            for (j = 0; j < p->n - 1 && find_dir(place_vref, dir, p->names[j], &dir) == noErr; j++) ;
+            if (j == p->n - 1 && is_open(place_vref, dir, p->names[j])) return fBsyErr;
+        }
+    for (i = 0; i < cfg.ncomps; i++) {
+        const EupComp *m = &cfg.comps[i];
+        if (!wanted(i)) continue;
+        for (k = 0; k < comps[i].n; k++) {
+            EupRecord r;
+            const unsigned char *rest;
+            int nrest;
+            long dir = place_dir;
+            eup_record_read(rec_at[comps[i].recs[k]], &r);
+            if (r.kind == EUP_REC_FOLDER) continue;
+            eup_record_under(&r, &m->source, &rest, &nrest);
+            for (j = 0; j < m->destination.n && find_dir(place_vref, dir, m->destination.names[j], &dir) == noErr; j++) ;
+            if (j < m->destination.n) continue;
+            for (j = 0; j < nrest - 1 && find_dir(place_vref, dir, rest, &dir) == noErr; j++, rest += 1 + rest[0]) ;
+            if (j < nrest - 1) continue;
+            if (!kept(dir, r.name) && is_open(place_vref, dir, r.name)) return fBsyErr;
+        }
+    }
+    return noErr;
+}
+
 static OSErr run_install(void)
 {
     short i, k;
     OSErr err = noErr;
-    size_window(place_vref, place_dir);
+    size_window(place_vref, place_dir, place_made);
     removing = false;
     prog_done = 0;
     prog_drawn = 0;
@@ -1183,15 +1651,6 @@ static pascal Boolean filter(DialogPtr d, EventRecord *e, short *item)
         Point p = e->where;
         ControlHandle c;
         short part;
-        WindowPtr w;
-        Rect limit = qd.screenBits.bounds;
-        if (FindWindow(p, &w) == inDrag && w == (WindowPtr)d) {      /* it moves by its title bar */
-            InsetRect(&limit, 4, 4);
-            DragWindow(w, p, &limit);
-            click_pt.h = click_pt.v = -32000;      /* nothing of what's drawn was clicked */
-            *item = CANVAS;
-            return true;
-        }
         SetPort(d);
         GlobalToLocal(&p);
         part = FindControl(p, d, &c);
@@ -1219,6 +1678,7 @@ static pascal Boolean filter(DialogPtr d, EventRecord *e, short *item)
 static void back_to_choices(DialogPtr d)
 {
     close_progress();
+    if (quit_asked) return;
     ShowWindow(d);
     SetPort(d);
     set_stage(d, S_INSTALL);
@@ -1241,7 +1701,9 @@ int main(void)
     InitCursor();
     FlushEvents(everyEvent, 0);
     if (!load()) { SysBeep(10); return 1; }      /* not made by the packager, or damaged */
+    set_menus();
     if (!(d = GetNewDialog(WIN, NULL, (WindowPtr)-1))) return 1;
+    center(d);
     SetWTitle(d, cfg.title);
     SetPort(d);
     c_primary = (GetDialogItem(d, B_PRIMARY, &type, &h, &r), (ControlHandle)h);
@@ -1253,6 +1715,7 @@ int main(void)
     tb_new(d, &tb_screen, MARGIN, MARGIN, 428, 206);
     /* the choices */
     SysEnvirons(1, &env);
+    sys7 = env.systemVersion >= 0x0700;
     place_vol = env.sysVRefNum;
     place_parent = 2;
     place_found = 0;
@@ -1278,8 +1741,7 @@ int main(void)
     ShowWindow(d);
     set_stage(d, cfg.description_screen.n ? S_DESC : cfg.license_screen.n ? S_LICENSE : S_INSTALL);
     while (!done) {
-        ModalDialog((ModalFilterUPP)filter, &item);
-        if (item == B_QUIT) done = true;
+        if (!next_item(d, filter, &item) || item == B_QUIT) done = true;
         else if (item == CANVAS) { if (stage == S_INSTALL) install_click(d, click_pt); }
         else if (item == B_CHOOSE) { choose_place(); note[0] = 0; redraw(d); }
         else if (item == B_PRIMARY) {
@@ -1288,6 +1750,16 @@ int main(void)
             else {
                 OSErr err;
                 Str255 s;
+                if (cfg.require && !found_earlier()) {      /* refused before anything is written */
+                    HideWindow(d);
+                    open_progress();
+                    fmt(s, STR_REQUIRED, cfg.require, NULL);
+                    prog_finish(s, STR_OK);
+                    note[0] = 0;
+                    back_to_choices(d);
+                    continue;
+                }
+                busy = true;
                 SetCursor(*GetCursor(watchCursor));
                 HideWindow(d);
                 open_progress();
@@ -1297,16 +1769,23 @@ int main(void)
                     back_to_choices(d);
                     continue;
                 }
-                err = run_install();
+                fail_name[0] = 0;
+                if ((err = preflight()) == noErr) err = run_install();
+                busy = false;
                 InitCursor();
                 note[0] = 0;
                 if (err == userCanceledErr) {
                     GetIndString(note, 128, STR_CANCELED);
                     back_to_choices(d);
+                } else if (err == fBsyErr && fail_name[0]) {
+                    fmt(s, STR_IN_USE, fail_name, fail_app ? fail_name : cfg.product);
+                    prog_finish(s, STR_OK);
+                    back_to_choices(d);
                 } else if (err) {
                     Str255 n;
                     NumToString(err, n);
-                    fmt(s, STR_FAILED, n, NULL);
+                    if (fail_name[0]) fmt(s, STR_NOT_REPLACED, fail_name, n);
+                    else fmt(s, STR_FAILED, n, NULL);
                     prog_finish(s, STR_OK);
                     back_to_choices(d);
                 } else {
