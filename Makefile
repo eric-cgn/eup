@@ -1,5 +1,5 @@
 # The command-line packager, eup, and the host tests. The installer program it carries is the prebuilt
-# one in prebuilt/ (installer/build.sh makes it, with Retro68).
+# one in prebuilt/ (build-mac.sh makes it, with Retro68).
 CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c99
 CORE = core/ini.c core/paths.c core/format.c core/deflate.c core/inflate.c core/package.c

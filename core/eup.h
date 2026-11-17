@@ -68,11 +68,12 @@ typedef struct {
     char text[200];
 } EupError;
 
-enum { EUP_MAX_ERRORS = 40 };
+enum { EUP_MAX_ERRORS = 40, EUP_MAX_WARNINGS = 10 };
 
 typedef struct {
     /* [installer] */
     PStr product, version, title, file, output, folder, get_info;
+    PStr version_string;            /* the version as shown: version_string if given, else version */
     unsigned long creator;
     int has_creator;
     EupPath icon, description_screen, license_screen;      /* n 0 if none */
@@ -86,6 +87,7 @@ typedef struct {
     int nremove, nkeep;
     EupPath *remove, *keep;
     PStr detect;                    /* a file whose folder is an earlier install, or NULL */
+    PStr require;                   /* the software that must be installed first, found by detect, or NULL */
     /* [layout] */
     int has_window;
     int window[4];                  /* left, top, width, height */
@@ -95,6 +97,9 @@ typedef struct {
     int nerrors;
     EupError errors[EUP_MAX_ERRORS];
     int more_errors;                /* more than EUP_MAX_ERRORS */
+    /* worth a look, but no reason not to package (the first EUP_MAX_WARNINGS) */
+    int nwarnings;
+    EupError warnings[EUP_MAX_WARNINGS];
     /* private */
     void *arena;
     int cap_types, cap_groups, cap_comps, cap_remove, cap_keep, cap_places;
@@ -115,6 +120,8 @@ int eup_split_path(EupConfig *c, const char *s, int kind, EupPath *out, char *wh
 PStr eup_name(EupConfig *c, const char *s, char *why);
 /* Whether two paths are the same (names compared as the Mac does, ignoring case) */
 int eup_same_path(const EupPath *a, const EupPath *b);
+/* Whether a is b, or inside it */
+int eup_path_in(const EupPath *a, const EupPath *b);
 int eup_same_name(const unsigned char *a, const unsigned char *b);
 
 /* UTF-8 to Mac Roman, for a packager's input. Returns the length written to out (which has room for

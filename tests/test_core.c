@@ -31,6 +31,16 @@ static int has_error(const EupConfig *c, int line, const char *text)
     return 0;
 }
 
+/* Whether a warning on line contains text */
+static int has_warning(const EupConfig *c, int line, const char *text)
+{
+    int i;
+    for (i = 0; i < c->nwarnings; i++)
+        if (c->warnings[i].line == line && strstr(c->warnings[i].text, text)) return 1;
+    for (i = 0; i < c->nwarnings; i++) fprintf(stderr, "  (warning, line %d: %s)\n", c->warnings[i].line, c->warnings[i].text);
+    return 0;
+}
+
 static const char *GOOD =
     "; a comment\n"
     "# another\n"
@@ -91,6 +101,7 @@ static void test_good(void)
     CHECK(!strcmp(EUP_C(c.output), "Install-Mill-2.0.1"));
     CHECK(!strcmp(EUP_C(c.folder), "Mill"));
     CHECK(c.get_info == c.title);
+    CHECK(c.version_string == c.version && c.nwarnings == 0);
     CHECK(c.vers[0] == 0x02 && c.vers[1] == 0x01 && c.vers[2] == 0x80 && c.vers[3] == 0);
     CHECK(c.description_screen.n == 2 && !strcmp(EUP_C(c.description_screen.names[1]), "About.txt"));
     CHECK(c.ntypes == 3 && c.types[2].custom && !c.types[1].remove_old && c.types[0].remove_old);
@@ -104,7 +115,7 @@ static void test_good(void)
     CHECK(!strcmp(EUP_C(c.comps[2].destination.names[0]), "SDK 100%"));
     CHECK(c.comps[2].has_type && c.comps[2].type == 0x54455854UL && c.comps[2].text && !c.comps[2].compress);
     CHECK(c.nremove == 2 && c.remove[1].n == 2 && c.nkeep == 1 && c.keep[0].n == 1);
-    CHECK(c.detect && !strcmp(EUP_C(c.detect), "Mill"));
+    CHECK(c.detect && !strcmp(EUP_C(c.detect), "Mill") && !c.require);
     CHECK(c.has_window && c.window[2] == 300 && c.nplaces == 2 && c.places[1].h == 108);
     eup_free(&c);
     /* CR and CR LF line ends read the same */
@@ -130,13 +141,13 @@ static void test_errors(void)
     EupConfig c;
     CHECK(parse(&c, "product = P\n") && has_error(&c, 1, "not in a section"));
     eup_free(&c);
-    CHECK(parse(&c, "") && has_error(&c, 0, "no [installer]") && has_error(&c, 0, "no [type]"));
+    CHECK(parse(&c, "") && has_error(&c, 0, "No [installer]") && has_error(&c, 0, "No [type]"));
     eup_free(&c);
-    CHECK(parse(&c, BASE "[installer]\n") && has_error(&c, 9, "a second [installer]"));
+    CHECK(parse(&c, BASE "[installer]\n") && has_error(&c, 9, "A second [installer]"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[installr]\n") && has_error(&c, 9, "not a section"));
     eup_free(&c);
-    CHECK(parse(&c, BASE "[type a]\n") && has_error(&c, 9, "a second [type a]"));
+    CHECK(parse(&c, BASE "[type a]\n") && has_error(&c, 9, "A second [type a]"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[type A b]\n") && has_error(&c, 9, "letters, digits"));
     eup_free(&c);
@@ -145,7 +156,7 @@ static void test_errors(void)
     eup_free(&c);
     CHECK(parse(&c, BASE "[upgrade]\ncolour = red\n") && has_error(&c, 10, "not a key of [upgrade]"));
     eup_free(&c);
-    CHECK(parse(&c, BASE "just words\n") && has_error(&c, 9, "not a key = value"));
+    CHECK(parse(&c, BASE "just words\n") && has_error(&c, 9, "Not a key = value"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[component y]\nlabel = Y\nsource = y\ntypes = a, b\n") && has_error(&c, 12, "no [type b]"));
     eup_free(&c);
@@ -168,7 +179,7 @@ static void test_errors(void)
           has_error(&c, 13, "starts with a disk's name"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[component y]\nlabel = Y\nsource = y\ntypes = a\ndestination = %system_folder%\n") &&
-          has_error(&c, 13, "not in EUP 1.0"));
+          has_error(&c, 13, "not in this version"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[component y]\nlabel = Y\nsource = y\ntypes = a\ndestination = %chosn%:x\n") &&
           has_error(&c, 13, "not a substitution"));
@@ -186,7 +197,37 @@ static void test_errors(void)
     eup_free(&c);
     CHECK(parse(&c, BASE "[component y]\nlabel = Y\nsource = y\ntypes = a\nflags = bundle, sparkly\n") && has_error(&c, 13, "not a Finder flag"));
     eup_free(&c);
-    CHECK(parse(&c, BASE "[upgrade]\nremove = Old\nkeep = :Old\n") && has_error(&c, 0, "both removed and kept"));
+    /* kept, so not removed: a warning, not an error */
+    CHECK(parse(&c, BASE "[upgrade]\nremove = Old\nkeep = :Old\n") == 0 && has_warning(&c, 11, "\"Old\" is removed and kept"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\nkeep = Prefs\nremove = :Prefs:Old\nremove = Other\nremove = Old\n") == 0 &&
+          c.nwarnings == 1 && has_warning(&c, 11, "\"Prefs:Old\" is removed and kept"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\nremove = Old\nkeep = :Old:Settings\n") == 0 && c.nwarnings == 0);
+    eup_free(&c);
+    /* require: the software that must be there first, found by detect */
+    CHECK(parse(&c, BASE "[upgrade]\ndetect = Mill\nrequire = Mill\n") == 0 && c.require && !strcmp(EUP_C(c.require), "Mill"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\nrequire = Mill 2.0\ndetect = Mill\n") == 0 && !strcmp(EUP_C(c.require), "Mill 2.0"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\nremove = Old\nrequire = Mill\n") && has_error(&c, 11, "require needs detect"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\ndetect = Mill\nrequire = Mill\nrequire = Mill\n") && has_error(&c, 12, "given twice"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[upgrade]\ndetect = M\nrequire = A name for the software that is longer than sixty-three characters\n") &&
+          has_error(&c, 11, "longer than 63"));
+    eup_free(&c);
+    /* a version to show, and the number for 'vers' */
+    CHECK(parse(&c, "[installer]\nproduct = P\nversion = 2.0.1\nversion_string = 2.0.1-dev-46a0304\n"
+                    "[type a]\nlabel = A\n[component x]\nlabel = X\nsource = x\ntypes = a\n") == 0 &&
+          !strcmp(EUP_C(c.title), "Install P 2.0.1-dev-46a0304") && !strcmp(EUP_C(c.version), "2.0.1") &&
+          c.vers[0] == 0x02 && c.vers[1] == 0x01);
+    eup_free(&c);
+    CHECK(parse(&c, "[installer]\nproduct = P\nversion_string = nightly\n"
+                    "[type a]\nlabel = A\n[component x]\nlabel = X\nsource = x\ntypes = a\n") &&
+          has_error(&c, 1, "version_string needs version"));
+    eup_free(&c);
+    CHECK(parse(&c, BASE "[installer]\n") && has_error(&c, 9, "A second [installer]"));
     eup_free(&c);
     CHECK(parse(&c, BASE "[layout]\nwindow = 1, 2, 3\nplace = Nowhere\n") && has_error(&c, 10, "left, top, width") &&
           has_error(&c, 11, "place: a name, a colon"));

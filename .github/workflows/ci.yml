@@ -1,7 +1,8 @@
 # Every pull request: the host tests on Linux and macOS, and on Linux the Mac programs built
-# with Retro68 and the release files made from them, kept as an artifact. A pull request into
-# main fails unless it comes from dev: features go into dev, and main only takes dev, as a
-# release.
+# with Retro68 and the release files made from them, kept as an artifact. The build is
+# reproducible, so the pull request fails if prebuilt/ isn't what its source builds (apart
+# from the dates in the MacBinary headers). A pull request into main fails unless it comes
+# from dev: features go into dev, and main only takes dev, as a release.
 name: CI
 
 on:
@@ -39,10 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: The committed programs
+        run: mkdir "$RUNNER_TEMP/committed" && cp prebuilt/*.bin "$RUNNER_TEMP/committed/"
       - name: Installer Shell and EUP (Retro68)
         run: ./build-mac.sh
       - name: Own the build output
         run: sudo chown -R "$(id -u):$(id -g)" build prebuilt   # the build's container runs as root
+      - name: prebuilt/ is what the source builds
+        run: tools/same-build.sh "$RUNNER_TEMP/committed" prebuilt
       - name: Test, with the programs just built
         run: make test
       - name: Release files

@@ -190,7 +190,17 @@ static void report(const EupConfig *c)
         if (c->errors[i].line) fprintf(stderr, "%s:%d: %s\n", ini_path, c->errors[i].line, u);
         else fprintf(stderr, "%s: %s\n", ini_path, u);
     }
-    if (c->more_errors) fprintf(stderr, "%s: and more\n", ini_path);
+    if (c->more_errors) fprintf(stderr, "%s: And more\n", ini_path);
+}
+
+static void report_warnings(const EupConfig *c)
+{
+    int i;
+    for (i = 0; i < c->nwarnings; i++) {
+        char u[800];
+        eup_to_utf8((const unsigned char *)c->warnings[i].text, (int)strlen(c->warnings[i].text), u);
+        fprintf(stderr, "%s:%d: Warning: %s\n", ini_path, c->warnings[i].line, u);
+    }
 }
 
 static int usage(void)
@@ -228,12 +238,13 @@ int main(int argc, char **argv)
     if (!(raw = read_file(ini_file, &len))) { fprintf(stderr, "eup: %s: %s\n", ini_file, strerror(errno)); return 1; }
     text = (char *)malloc(len + 1);
     if ((tlen = eup_from_utf8(raw, len, text, &line)) < 0) {
-        fprintf(stderr, "%s:%d: a character that Mac Roman doesn't have (the INI is read as UTF-8)\n", ini_file, line);
+        fprintf(stderr, "%s:%d: A character that Mac Roman doesn't have (the INI is read as UTF-8)\n", ini_file, line);
         return 1;
     }
     for (i = 0; i < tlen; i++) if (text[i] == '\n') text[i] = '\r';     /* as a Mac would keep it */
     if (eup_parse(&c, text, tlen) < 0) { fprintf(stderr, "eup: out of memory\n"); return 1; }
     if (c.nerrors) { report(&c); return 1; }
+    report_warnings(&c);
     /* the files: in the INI's folder */
     snprintf(root, sizeof root, "%s", ini_file);
     if ((slash = strrchr(root, '/'))) *slash = 0; else strcpy(root, ".");
@@ -250,7 +261,7 @@ int main(int argc, char **argv)
     fs.read_at = h_read_at;
     fs.close = h_close;
     fs.utf8_text = 1;
-    if (!eup_macbinary_read(eup_shell, eup_shell_len, &shell_info)) { fprintf(stderr, "eup: the installer program built in is damaged\n"); return 1; }
+    if (!eup_macbinary_read(eup_shell, eup_shell_len, &shell_info)) { fprintf(stderr, "eup: the built-in installer program is damaged; rebuild eup\n"); return 1; }
     memset(&in, 0, sizeof in);
     in.fs = &fs;
     in.config = &c;
@@ -263,7 +274,7 @@ int main(int argc, char **argv)
     in.data_ref = &data;
     if (eup_pack_check(&in, &pack)) { report(&c); return 1; }
     if (!build) {
-        printf("%s: no problems\n", ini_file);
+        printf(c.nwarnings ? "%s: no errors\n" : "%s: no problems\n", ini_file);
         eup_pack_free(pack);
         return 0;
     }

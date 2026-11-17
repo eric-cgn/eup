@@ -7,7 +7,7 @@ or your own), a custom list with checkboxes and sizes, the disk space, Install L
 Choose…, a progress window with Cancel, upgrades that remove old names, and, if you want them, a
 screen about the software and a license to agree to.
 
-An installer made with EUP runs on a Mac Plus or later with System 6 or later. It is one
+An installer made with EUP runs on a Mac Plus or later with System 6.0.3 or later. It is one
 application: the installer program (about 41K) with the INI and the files, compressed, inside it.
 
 From OneInAMillion Software, makers of Mill. Freeware, MIT.
@@ -15,7 +15,7 @@ From OneInAMillion Software, makers of Mill. Freeware, MIT.
 ## Two packagers
 
 - **EUP**, an application for the Mac: open the INI file, see any problems by line, save the
-  installer. It runs on a Mac Plus. It's on the release disk, `EUP-1.0.image`, with the
+  installer. It runs on a Mac Plus. It's on the release disk, `EUP-1.3.image`, with the
   Installer Shell it needs, a Read Me, and an example.
 - **`eup`**, a command for Linux (and macOS), for making installers as part of a build: it reads
   MacBinary files (as Retro68 writes them), plain files, and folders, and writes the installer as
@@ -89,9 +89,10 @@ The INI's keys, all of them: [docs/ini.md](docs/ini.md).
 - `make test`: the host tests for the core and `eup` (macOS and Linux).
 - `./build-mac.sh`: the installer program and EUP, with Retro68 in Docker (the image pinned by
   digest), into `prebuilt/`. Only for changing them: `eup` uses the prebuilt installer program, so
-  making installers never needs Retro68.
-- `./release.sh`: `dist/EUP-1.0.image` (the Mac disk), EUP and the Installer Shell alone as `.bin`
-  and `.hqx`, and `dist/eup-1.0.tar.gz` and `.zip` (the source, for `eup`).
+  making installers never needs Retro68. The build is reproducible: the CI rebuilds them for every
+  pull request and fails if `prebuilt/` differs (apart from the dates in the MacBinary headers).
+- `./release.sh`: `dist/EUP-1.3.image` (the Mac disk), EUP and the Installer Shell alone as `.bin`
+  and `.hqx`, and `dist/eup-1.3.tar.gz` and `.zip` (the source, for `eup`).
 
 The version is set in one place, `core/version.h`; what each version changed is in
 [CHANGES.md](CHANGES.md).

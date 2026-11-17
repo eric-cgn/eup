@@ -45,18 +45,18 @@ resource 'MENU' (130) { 130, textMenuProc, 0, enabled, "Edit", {
 
 resource 'STR#' (128) {
     {
-        "The Installer Shell is missing. It goes in the same folder as EUP.";
+        "The Installer Shell can't be found. Put it in the same folder as EUP.";
         "The INI file can't be read.";
         "Save the installer as:";
-        "Packaging \"^0\"";
-        "\"^0\" is ready.";
+        "Packaging \322^0\323";
+        "\322^0\323 is ready.";
         "Packaging failed: ^0.";
         "Packaging canceled.";
         "Line ^0: ^1";
         "Installer Shell";
-        "Not enough memory.";
+        "There isn't enough memory. Give EUP more in its Get Info window.";
         "And more.";
-        "The installer can't be written."
+        "The installer can't be written. Check that the disk isn't locked or full."
     }
 };
 

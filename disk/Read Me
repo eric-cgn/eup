@@ -1,6 +1,7 @@
 EUP 1.0
+Part No. #1E6-DE01-V13
 
-EUP makes installers. You write a text file that names your files and says where they go; EUP makes an installer from it. Every installer made with EUP looks and works the same way: install types in a pop-up menu, a list for Custom Install, the disk space needed, Install Location with Choose..., and a progress window with Cancel. An installer can also show a screen about your software and a license to agree to.
+EUP makes installers. You write a text file that names your files and says where they go; EUP makes an installer from it. Every installer made with EUP looks and works the same way: install types in a pop-up menu, a list for Custom Install, the disk space needed, Install Location with Choose…, and a progress window with Cancel. An installer can also show a screen about your software and a license to agree to.
 
 On this disk
 
@@ -52,7 +53,7 @@ Paths are written with colons, from the INI file's folder: Files:Samples. In des
 [installer]
 product: the software's name. Needed.
 version: its version, such as 1.0 or 2.0.1.
-title: the window's title. Normally "Install" with the product and version.
+title: the window's title. Normally “Install” with the product and version.
 file: the installer's name. Normally the title.
 folder: the name of the folder offered for the install. Normally the product.
 get_info: the version line in Get Info.
@@ -80,6 +81,7 @@ compress = no: stored as is.
 
 [upgrade]
 detect: a file that marks an earlier install; the installer installs into its folder.
+require: the software that must be installed first: require = Mill. The installer looks for it as detect does, and won't install without it.
 remove: an old name to remove. One to a line, as many as needed.
 keep: a file not to replace if it's there.
 
@@ -91,6 +93,6 @@ Each line of a text file is a line on the screen: write a paragraph as one line,
 
 Requirements
 
-EUP and the installers it makes need a Mac Plus or later and System 6 or later. EUP needs 512K of memory.
+EUP and the installers it makes need a Mac Plus or later and System 6.0.3 or later. EUP needs 512K of memory.
 
 EUP 1.0. © 2026 OneInAMillion Software. Freeware.

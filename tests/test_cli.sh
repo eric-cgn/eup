@@ -33,8 +33,18 @@ cp examples/hello/hello.ini "$T/broken/hello.ini"
 ./eup check "$T/broken" 2>"$T/err"; grep -q 'no file or folder "Files:Hello Read Me.txt"' "$T/err" && ok "missing file" || { bad "missing file"; cat "$T/err"; }
 cp "$T/broken/hello.ini" "$T/broken/second.ini"
 ./eup check "$T/broken" 2>"$T/err"; grep -q 'more than one .ini' "$T/err" && ok "two INI files" || bad "two INI files"
+{ cat examples/hello/hello.ini; printf '[upgrade]\nremove = Hello Read Me\nkeep = Hello Read Me\n'; } > "$T/broken/hello.ini"
+rm "$T/broken/second.ini"; cp "examples/hello/Files/Hello Read Me.txt" "$T/broken/Files/"
+./eup check "$T/broken" >"$T/out" 2>"$T/err" && grep -q 'hello.ini:[0-9]*: Warning: "Hello Read Me" is removed and kept' "$T/err" &&
+	grep -q 'no errors' "$T/out" && ok "warning" || { bad "warning"; cat "$T/err"; }
+{ cat examples/hello/hello.ini; printf '[upgrade]\nrequire = Hello\n'; } > "$T/broken/hello.ini"
+if ./eup build "$T/broken" -o "$T/out-require" 2>"$T/err"; then bad "require without detect accepted"; else
+	grep -q 'hello.ini:[0-9]*: \[upgrade\]: require needs detect' "$T/err" && [ ! -e "$T/out-require" ] &&
+		ok "require without detect" || { bad "require without detect"; cat "$T/err"; }; fi
+{ cat examples/hello/hello.ini; printf '[upgrade]\ndetect = Hello\nrequire = Hello\n'; } > "$T/broken/hello.ini"
+./eup check "$T/broken" >/dev/null 2>"$T/err" && ok "require" || { bad "require"; cat "$T/err"; }
 printf '[installer]\nproduct = Caf\351\n' > "$T/latin1.ini"
-./eup check "$T/latin1.ini" 2>"$T/err"; grep -q 'latin1.ini:2: a character that Mac Roman' "$T/err" && ok "not UTF-8" || { bad "not UTF-8"; cat "$T/err"; }
+./eup check "$T/latin1.ini" 2>"$T/err"; grep -q 'latin1.ini:2: A character that Mac Roman' "$T/err" && ok "not UTF-8" || { bad "not UTF-8"; cat "$T/err"; }
 
 if [ -f examples/mill/Mill.bin ]; then
 	./eup build examples/mill -o "$T" >/dev/null && ok "build mill" || bad "build mill"
