@@ -28,7 +28,7 @@ A copy of the installer program, with:
 | `'Efil'` 128 | A record of each file and folder packaged (below). |
 | `'vers'` 1 | From `version` and `get_info` (none without a version). |
 | the creator's 0, `'BNDL'` 128, the icons | If `creator` is given: the owner resource (the title), a bundle for that creator, and the `icon` file's icons. |
-| the data fork | The payload: each file's data fork then its resource fork, as one gzip stream (or as they are, for `compress = no`), one file after another. |
+| the data fork | `EUP ` (4 bytes), then the payload: each file's data fork then its resource fork, as one gzip stream (or as they are, for `compress = no`), one file after another. The 4 bytes keep StuffIt Expander from taking the installer for a gzip file. |
 
 `'Efil'` 128 is a count (2 bytes), then a record for each item, big-endian:
 
