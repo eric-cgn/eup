@@ -15,7 +15,7 @@ From OneInAMillion Software, makers of Mill. Freeware, MIT.
 ## Two packagers
 
 - **EUP**, an application for the Mac: open the INI file, see any problems by line, save the
-  installer. It runs on a Mac Plus. It's on the release disk, `EUP-1.3.image`, with the
+  installer. It runs on a Mac Plus. It's on the release disk, `EUP-1.4.image`, with the
   Installer Shell it needs, a Read Me, and an example.
 - **`eup`**, a command for Linux (and macOS), for making installers as part of a build: it reads
   MacBinary files (as Retro68 writes them), plain files, and folders, and writes the installer as
@@ -91,8 +91,8 @@ The INI's keys, all of them: [docs/ini.md](docs/ini.md).
   digest), into `prebuilt/`. Only for changing them: `eup` uses the prebuilt installer program, so
   making installers never needs Retro68. The build is reproducible: the CI rebuilds them for every
   pull request and fails if `prebuilt/` differs (apart from the dates in the MacBinary headers).
-- `./release.sh`: `dist/EUP-1.3.image` (the Mac disk), EUP and the Installer Shell alone as `.bin`
-  and `.hqx`, and `dist/eup-1.3.tar.gz` and `.zip` (the source, for `eup`).
+- `./release.sh`: `dist/EUP-1.4.image` (the Mac disk), EUP and the Installer Shell alone as `.bin`
+  and `.hqx`, and `dist/eup-1.4.tar.gz` and `.zip` (the source, for `eup`).
 
 The version is set in one place, `core/version.h`; what each version changed is in
 [CHANGES.md](CHANGES.md).

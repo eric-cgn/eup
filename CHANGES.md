@@ -1,5 +1,10 @@
 # Changes
 
+## 1.4
+
+- StuffIt Expander no longer leaves a `.ungz` file beside an installer it decodes from `.hqx` or `.bin`. The installer's data fork now starts with `EUP `, not a gzip stream.
+- The release disk's Read Me carries the part number, #1E6-DE01-V14.
+
 ## 1.3
 
 - Reworded messages in the installer, EUP, and `eup`. Check messages start with a capital letter.
