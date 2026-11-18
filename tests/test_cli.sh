@@ -18,6 +18,8 @@ V=$(sed -n 's/^#define EUP_VERSION "\(.*\)"/\1/p' core/version.h)
 head -c 128 "$T/Install-Hello-1.0.bin" | od -An -c | tr -d ' \n' | grep -q 'InstallHello1\.0' && ok "hello name" || bad "hello name"
 [ "$(dd if="$T/Install-Hello-1.0.bin" bs=1 skip=65 count=8 2>/dev/null)" = APPLEUPi ] && ok "hello type and creator" || bad "hello type and creator"
 [ "$(dd if="$T/Install-Hello-1.0.bin" bs=1 skip=73 count=1 2>/dev/null | od -An -tx1 | tr -d ' ')" = 20 ] && ok "hello bundle flag" || bad "hello bundle flag"
+# the data fork (after the 128-byte header) starts with "EUP ", not gzip, so StuffIt Expander leaves it be
+[ "$(dd if="$T/Install-Hello-1.0.bin" bs=1 skip=128 count=4 2>/dev/null)" = "EUP " ] && ok "hello data fork" || bad "hello data fork"
 head -c 46 "$T/Install-Hello-1.0.hqx" | grep -q '^(This file must be converted with BinHex 4.0)' && ok "hello hqx" || bad "hello hqx"
 
 # errors: by line, and nothing written

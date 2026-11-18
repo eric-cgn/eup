@@ -1,5 +1,5 @@
 EUP 1.0
-Part No. #1E6-DE01-V13
+Part No. #1E6-DE01-V14
 
 EUP makes installers. You write a text file that names your files and says where they go; EUP makes an installer from it. Every installer made with EUP looks and works the same way: install types in a pop-up menu, a list for Custom Install, the disk space needed, Install Location with Choose…, and a progress window with Cancel. An installer can also show a screen about your software and a license to agree to.
 

@@ -534,7 +534,10 @@ int eup_pack(EupPackage *p, EupPackOut *out, char *why)
         }
         free(b);
     }
-    /* the payload: each file's forks, one after the other, in the data fork */
+    /* the payload: each file's forks, one after the other, in the data fork, after "EUP ".
+       Without it the data fork starts like a gzip file, and StuffIt Expander, decoding an
+       installer from .hqx or .bin, also expands that first stream into a stray ".ungz" file. */
+    if (data_out(&r, (const unsigned char *)"EUP ", 4)) { eup_fmt(why, "the installer can't be written", NULL, NULL); goto done; }
     for (i = 0; i < p->nitems; i++) {
         Item *it = &p->items[i];
         EupRecord rec;
